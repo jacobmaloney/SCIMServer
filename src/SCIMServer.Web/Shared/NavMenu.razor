@@ -1,0 +1,312 @@
+<div class="nav-wrapper">
+    <div class="nav-header">
+        <a class="nav-brand" href="">
+            <i class="oi oi-cloud"></i>
+            <span>SCIM Server</span>
+        </a>
+        <button class="nav-toggle" @onclick="ToggleNavMenu">
+            <span class="nav-toggle-icon"></span>
+        </button>
+    </div>
+    
+    <nav class="nav-menu @NavMenuCssClass">
+        <div class="nav-section nav-section-main">
+            <div class="nav-section-title">Main</div>
+            <NavLink class="nav-item" href="" Match="NavLinkMatch.All">
+                <i class="oi oi-dashboard"></i>
+                <span>Dashboard</span>
+            </NavLink>
+            <NavLink class="nav-item" href="users">
+                <i class="oi oi-people"></i>
+                <span>Users</span>
+            </NavLink>
+            <NavLink class="nav-item" href="groups">
+                <i class="oi oi-badge"></i>
+                <span>Groups</span>
+            </NavLink>
+        </div>
+        
+        <div class="nav-section nav-section-tools">
+            <div class="nav-section-title">Tools</div>
+            <NavLink class="nav-item" href="user-generation">
+                <i class="oi oi-people"></i>
+                <span>Generate Users</span>
+            </NavLink>
+            <NavLink class="nav-item" href="group-generation">
+                <i class="oi oi-layers"></i>
+                <span>Generate Groups</span>
+            </NavLink>
+            <NavLink class="nav-item" href="quick-connect">
+                <i class="oi oi-link-intact"></i>
+                <span>Quick Connect</span>
+            </NavLink>
+            <NavLink class="nav-item" href="api-explorer">
+                <i class="oi oi-code"></i>
+                <span>API Explorer</span>
+            </NavLink>
+            <NavLink class="nav-item" href="tokens">
+                <i class="oi oi-key"></i>
+                <span>API Tokens</span>
+            </NavLink>
+        </div>
+        
+        <div class="nav-section nav-section-settings">
+            <div class="nav-section-title">Settings</div>
+            <NavLink class="nav-item" href="configuration">
+                <i class="oi oi-cog"></i>
+                <span>Configuration</span>
+            </NavLink>
+            <NavLink class="nav-item" href="audit-log">
+                <i class="oi oi-list-rich"></i>
+                <span>Audit Log</span>
+            </NavLink>
+            <NavLink class="nav-item" href="logs">
+                <i class="oi oi-bug"></i>
+                <span>Debug Logs</span>
+            </NavLink>
+        </div>
+    </nav>
+    
+    <div class="nav-footer">
+        <div class="nav-footer-info">
+            <small>SCIM 2.0 Compliant</small>
+            <small>Version 1.0.0</small>
+        </div>
+    </div>
+</div>
+
+<style>
+    .nav-wrapper {
+        height: 100%;
+        background: white;
+        border-right: 1px solid #e5e7eb;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .nav-header {
+        padding: 1.5rem;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .nav-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        text-decoration: none;
+        color: var(--dark-color);
+        font-weight: 600;
+        font-size: 1.25rem;
+    }
+    
+    .nav-brand i {
+        color: var(--primary-color);
+        font-size: 1.5rem;
+    }
+    
+    .nav-toggle {
+        display: none;
+        background: none;
+        border: none;
+        padding: 0.5rem;
+        cursor: pointer;
+        color: var(--dark-color);
+    }
+    
+    .nav-toggle-icon {
+        display: block;
+        width: 24px;
+        height: 2px;
+        background: currentColor;
+        position: relative;
+    }
+    
+    .nav-toggle-icon::before,
+    .nav-toggle-icon::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background: currentColor;
+        left: 0;
+    }
+    
+    .nav-toggle-icon::before {
+        top: -6px;
+    }
+    
+    .nav-toggle-icon::after {
+        top: 6px;
+    }
+    
+    .nav-menu {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem 0;
+    }
+    
+    .nav-section {
+        margin-bottom: 2rem;
+        padding: 0 1rem;
+    }
+    
+    .nav-section-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--secondary-color);
+        margin-bottom: 0.5rem;
+        padding: 0 1rem;
+    }
+    
+    /* Purple for Main section */
+    .nav-section-main .nav-section-title {
+        color: #8b5cf6;
+    }
+    
+    .nav-section-main .nav-item {
+        color: #6b7280;
+    }
+    
+    .nav-section-main .nav-item i {
+        color: #8b5cf6;
+    }
+    
+    .nav-section-main .nav-item:hover {
+        background: #f3f0ff;
+        color: #7c3aed;
+    }
+    
+    .nav-section-main .nav-item.active {
+        background: #8b5cf6;
+        color: white;
+    }
+    
+    .nav-section-main .nav-item.active i {
+        color: white;
+    }
+    
+    /* Green for Tools section */
+    .nav-section-tools .nav-section-title {
+        color: #10b981;
+    }
+    
+    .nav-section-tools .nav-item {
+        color: #6b7280;
+    }
+    
+    .nav-section-tools .nav-item i {
+        color: #059669;
+    }
+    
+    .nav-section-tools .nav-item:hover {
+        background: #d1fae5;
+        color: #047857;
+    }
+    
+    .nav-section-tools .nav-item.active {
+        background: #10b981;
+        color: white;
+    }
+    
+    .nav-section-tools .nav-item.active i {
+        color: white;
+    }
+    
+    /* Blue for Settings section */
+    .nav-section-settings .nav-section-title {
+        color: #3b82f6;
+    }
+    
+    .nav-section-settings .nav-item {
+        color: #6b7280;
+    }
+    
+    .nav-section-settings .nav-item i {
+        color: #2563eb;
+    }
+    
+    .nav-section-settings .nav-item:hover {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+    
+    .nav-section-settings .nav-item.active {
+        background: #3b82f6;
+        color: white;
+    }
+    
+    .nav-section-settings .nav-item.active i {
+        color: white;
+    }
+    
+    .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        text-decoration: none;
+        color: var(--dark-color);
+        border-radius: 0.5rem;
+        transition: all 0.2s;
+        margin-bottom: 0.25rem;
+    }
+    
+    .nav-item:hover {
+        background: var(--light-bg);
+        color: var(--primary-color);
+    }
+    
+    .nav-item.active {
+        background: var(--primary-color);
+        color: white;
+    }
+    
+    .nav-item i {
+        font-size: 1.125rem;
+        width: 1.5rem;
+        text-align: center;
+    }
+    
+    .nav-footer {
+        padding: 1.5rem;
+        border-top: 1px solid #e5e7eb;
+    }
+    
+    .nav-footer-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        color: var(--secondary-color);
+        font-size: 0.875rem;
+    }
+    
+    @@media (max-width: 768px) {
+        .nav-toggle {
+            display: block;
+        }
+        
+        .nav-menu.collapse {
+            display: none;
+        }
+        
+        .nav-footer {
+            display: none;
+        }
+    }
+</style>
+
+@code {
+    private bool collapseNavMenu = true;
+
+    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+
+    private void ToggleNavMenu()
+    {
+        collapseNavMenu = !collapseNavMenu;
+    }
+}

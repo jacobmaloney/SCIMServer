@@ -1,0 +1,53 @@
+@inherits LayoutComponentBase
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SCIM Server Setup</title>
+    <base href="~/" />
+    <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
+    <link href="css/site.css" rel="stylesheet" />
+    <link href="SCIMServer.Web.styles.css" rel="stylesheet" />
+    <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+</head>
+<body>
+    <div class="setup-container">
+        <nav class="navbar navbar-dark bg-dark">
+            <div class="container">
+                <span class="navbar-brand">SCIM Server Setup</span>
+            </div>
+        </nav>
+
+        <main role="main">
+            @Body
+        </main>
+
+        <footer class="text-center py-3 text-muted">
+            <small>SCIM Server v1.0.0 | <a href="https://github.com/yourusername/scimserver" target="_blank">Documentation</a></small>
+        </footer>
+    </div>
+
+    <script src="_framework/blazor.server.js"></script>
+</body>
+</html>
+
+<style>
+    .setup-container {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    main {
+        flex: 1;
+        background-color: #f8f9fa;
+        padding: 2rem 0;
+    }
+
+    footer {
+        background-color: white;
+        border-top: 1px solid #dee2e6;
+    }
+</style>

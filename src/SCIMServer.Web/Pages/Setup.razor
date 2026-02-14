@@ -1,0 +1,528 @@
+@page "/setup"
+@using SCIMServer.Web.Services
+@using System.Security.Cryptography
+@using Microsoft.Data.SqlClient
+@inject SetupService SetupService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject IConfiguration Configuration
+@layout SetupLayout
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">SCIM Server Initial Setup</h3>
+                </div>
+                <div class="card-body">
+                    @if (isProcessing)
+                    {
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Setting up...</span>
+                            </div>
+                            <p class="mt-3">Setting up SCIM Server, please wait...</p>
+                        </div>
+                    }
+                    else if (setupComplete)
+                    {
+                        <div class="alert alert-success">
+                            <h4 class="alert-heading">Setup Complete!</h4>
+                            <p>SCIM Server has been successfully configured.</p>
+                            <hr>
+                            <p class="mb-0">Redirecting to login page...</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-info mb-4">
+                            <strong>Welcome!</strong> This appears to be the first time running SCIM Server. 
+                            Please complete the setup below to get started.
+                        </div>
+
+                        <EditForm Model="@config" OnValidSubmit="@HandleValidSubmit">
+                            <DataAnnotationsValidator />
+
+                            <!-- Step indicator -->
+                            <div class="step-indicator mb-4">
+                                <div class="row text-center">
+                                    <div class="col">
+                                        <div class="step @(currentStep >= 1 ? "active" : "")">1</div>
+                                        <small>Database</small>
+                                    </div>
+                                    <div class="col">
+                                        <div class="step @(currentStep >= 2 ? "active" : "")">2</div>
+                                        <small>Admin User</small>
+                                    </div>
+                                    <div class="col">
+                                        <div class="step @(currentStep >= 3 ? "active" : "")">3</div>
+                                        <small>Security</small>
+                                    </div>
+                                    <div class="col">
+                                        <div class="step @(currentStep >= 4 ? "active" : "")">4</div>
+                                        <small>Review</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            @if (currentStep == 1)
+                            {
+                                <!-- Step 1: Database Configuration -->
+                                <h4>Database Configuration</h4>
+                                <p class="text-muted">Configure the database connection for SCIM Server.</p>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Database Type</label>
+                                    <select class="form-select" @bind="databaseType">
+                                        <option value="localdb">SQL Server LocalDB (Development)</option>
+                                        <option value="sqlexpress">SQL Server Express</option>
+                                        <option value="sqlserver">SQL Server</option>
+                                        <option value="custom">Custom Connection String</option>
+                                    </select>
+                                </div>
+
+                                @if (databaseType == "sqlexpress" || databaseType == "sqlserver")
+                                {
+                                    <div class="mb-3">
+                                        <label class="form-label">Server Name</label>
+                                        <input type="text" class="form-control" @bind="serverName" 
+                                               placeholder="@(databaseType == "sqlexpress" ? ".\\SQLEXPRESS" : "localhost")" />
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label">Authentication</label>
+                                        <select class="form-select" @bind="authType">
+                                            <option value="windows">Windows Authentication</option>
+                                            <option value="sql">SQL Server Authentication</option>
+                                        </select>
+                                    </div>
+
+                                    @if (authType == "sql")
+                                    {
+                                        <div class="mb-3">
+                                            <label class="form-label">Username</label>
+                                            <input type="text" class="form-control" @bind="dbUsername" />
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">Password</label>
+                                            <input type="password" class="form-control" @bind="dbPassword" />
+                                        </div>
+                                    }
+
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="trustServerCertificate" @bind="trustServerCertificate" />
+                                        <label class="form-check-label" for="trustServerCertificate">
+                                            Trust server certificate (use for self-signed SSL certificates)
+                                        </label>
+                                        <small class="form-text text-muted d-block">
+                                            Enable this if you're getting SSL certificate trust errors. Not recommended for production.
+                                        </small>
+                                    </div>
+
+                                    <div class="form-check mb-3">
+                                        <input type="checkbox" class="form-check-input" id="encryptConnection" @bind="encryptConnection" />
+                                        <label class="form-check-label" for="encryptConnection">
+                                            Encrypt connection
+                                        </label>
+                                        <small class="form-text text-muted d-block">
+                                            Uncheck this to disable encryption. May help with SSPI context errors.
+                                        </small>
+                                    </div>
+                                }
+                                else if (databaseType == "custom")
+                                {
+                                    <div class="mb-3">
+                                        <label class="form-label">Connection String</label>
+                                        <textarea class="form-control" rows="3" @bind="config.ConnectionString"
+                                                  placeholder="Server=localhost;Database=SCIMServer;..."></textarea>
+                                    </div>
+                                }
+
+                                <div class="mb-3">
+                                    <button type="button" class="btn btn-sm btn-secondary" @onclick="TestConnection" disabled="@testingConnection">
+                                        @if (testingConnection)
+                                        {
+                                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                        }
+                                        Test Connection
+                                    </button>
+                                    @if (!string.IsNullOrEmpty(connectionTestResult))
+                                    {
+                                        <div class="mt-2 alert @(connectionTestSuccess ? "alert-success" : "alert-danger") py-2">
+                                            @connectionTestResult
+                                            @if (connectionTestResult.Contains("SSPI") || connectionTestResult.Contains("principal name"))
+                                            {
+                                                <hr class="my-2" />
+                                                <small>
+                                                    <strong>SSPI Error Help:</strong>
+                                                    <ul class="mb-0 ps-3">
+                                                        <li>Try switching to SQL Server Authentication instead of Windows Authentication</li>
+                                                        <li>Uncheck "Encrypt connection" above</li>
+                                                        <li>Verify the server name is correct (use computer name instead of IP)</li>
+                                                        <li>Check if SQL Server Browser service is running</li>
+                                                    </ul>
+                                                </small>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else if (currentStep == 2)
+                            {
+                                <!-- Step 2: Admin User -->
+                                <h4>Administrator Account</h4>
+                                <p class="text-muted">Create the administrator account for SCIM Server.</p>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Admin Username</label>
+                                    <InputText class="form-control" @bind-Value="config.AdminUsername" />
+                                    <ValidationMessage For="@(() => config.AdminUsername)" />
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Admin Password</label>
+                                    <InputText type="password" class="form-control" @bind-Value="config.AdminPassword" />
+                                    <ValidationMessage For="@(() => config.AdminPassword)" />
+                                    <small class="form-text text-muted">Minimum 8 characters</small>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Confirm Password</label>
+                                    <input type="password" class="form-control" @bind="confirmPassword" />
+                                    @if (!string.IsNullOrEmpty(confirmPassword) && confirmPassword != config.AdminPassword)
+                                    {
+                                        <div class="text-danger small mt-1">Passwords do not match</div>
+                                    }
+                                </div>
+                            }
+                            else if (currentStep == 3)
+                            {
+                                <!-- Step 3: Security Settings -->
+                                <h4>Security Configuration</h4>
+                                <p class="text-muted">Configure security settings for SCIM Server.</p>
+
+                                <div class="mb-3">
+                                    <label class="form-label">JWT Secret Key</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" @bind="config.JwtSecretKey" readonly />
+                                        <button type="button" class="btn btn-outline-secondary" @onclick="GenerateSecretKey">
+                                            Generate New
+                                        </button>
+                                    </div>
+                                    <small class="form-text text-muted">This key is used to sign JWT tokens. Keep it secure!</small>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Server Port</label>
+                                    <InputNumber class="form-control" @bind-Value="config.ServerPort" />
+                                </div>
+
+                                <div class="form-check mb-3">
+                                    <InputCheckbox class="form-check-input" @bind-Value="config.UseHttps" />
+                                    <label class="form-check-label">
+                                        Enable HTTPS (recommended for production)
+                                    </label>
+                                </div>
+                            }
+                            else if (currentStep == 4)
+                            {
+                                <!-- Step 4: Review -->
+                                <h4>Review Configuration</h4>
+                                <p class="text-muted">Please review your settings before completing setup.</p>
+
+                                <dl class="row">
+                                    <dt class="col-sm-4">Database</dt>
+                                    <dd class="col-sm-8">
+                                        @if (databaseType == "localdb")
+                                        {
+                                            <text>SQL Server LocalDB</text>
+                                        }
+                                        else if (databaseType == "custom")
+                                        {
+                                            <text>Custom</text>
+                                        }
+                                        else
+                                        {
+                                            <text>@serverName</text>
+                                        }
+                                    </dd>
+
+                                    <dt class="col-sm-4">Admin Username</dt>
+                                    <dd class="col-sm-8">@config.AdminUsername</dd>
+
+                                    <dt class="col-sm-4">Server URL</dt>
+                                    <dd class="col-sm-8">@(config.UseHttps ? "https" : "http")://localhost:@config.ServerPort</dd>
+
+                                    <dt class="col-sm-4">JWT Security</dt>
+                                    <dd class="col-sm-8">✓ Configured</dd>
+                                </dl>
+
+                                @if (errors.Any())
+                                {
+                                    <div class="alert alert-danger">
+                                        <h6>Please fix the following errors:</h6>
+                                        <ul class="mb-0">
+                                            @foreach (var error in errors)
+                                            {
+                                                <li>@error</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+                            }
+
+                            <div class="d-flex justify-content-between mt-4">
+                                <button type="button" class="btn btn-secondary" @onclick="PreviousStep" 
+                                        disabled="@(currentStep == 1)">
+                                    Previous
+                                </button>
+
+                                @if (currentStep < 4)
+                                {
+                                    <button type="button" class="btn btn-primary" @onclick="NextStep">
+                                        Next
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button type="submit" class="btn btn-success" disabled="@isProcessing">
+                                        Complete Setup
+                                    </button>
+                                }
+                            </div>
+                        </EditForm>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .step-indicator {
+        margin-bottom: 2rem;
+    }
+
+    .step {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background-color: #e9ecef;
+        color: #6c757d;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        margin: 0 auto;
+    }
+
+    .step.active {
+        background-color: #0d6efd;
+        color: white;
+    }
+</style>
+
+@code {
+    private SetupConfiguration config = new();
+    private int currentStep = 1;
+    private bool isProcessing = false;
+    private bool setupComplete = false;
+    private List<string> errors = new();
+
+    // Database configuration
+    private string databaseType = "localdb";
+    private string serverName = ".\\SQLEXPRESS";
+    private string authType = "windows";
+    private string dbUsername = "sa";
+    private string dbPassword = "";
+    private bool trustServerCertificate = false;
+    private bool encryptConnection = true;
+
+    // Password confirmation
+    private string confirmPassword = "";
+
+    // Connection test
+    private bool testingConnection = false;
+    private string connectionTestResult = "";
+    private bool connectionTestSuccess = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check if setup is required
+        var setupRequired = await SetupService.IsSetupRequiredAsync();
+        if (!setupRequired)
+        {
+            Navigation.NavigateTo("/");
+        }
+
+        // Generate initial secret key
+        GenerateSecretKey();
+    }
+
+    private void NextStep()
+    {
+        errors.Clear();
+
+        // Validate current step
+        if (currentStep == 1)
+        {
+            UpdateConnectionString();
+            if (string.IsNullOrWhiteSpace(config.ConnectionString))
+            {
+                errors.Add("Please configure the database connection");
+                return;
+            }
+        }
+        else if (currentStep == 2)
+        {
+            if (string.IsNullOrWhiteSpace(config.AdminUsername))
+            {
+                errors.Add("Admin username is required");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(config.AdminPassword) || config.AdminPassword.Length < 8)
+            {
+                errors.Add("Admin password must be at least 8 characters");
+                return;
+            }
+            if (config.AdminPassword != confirmPassword)
+            {
+                errors.Add("Passwords do not match");
+                return;
+            }
+        }
+
+        if (currentStep < 4)
+        {
+            currentStep++;
+        }
+    }
+
+    private void PreviousStep()
+    {
+        if (currentStep > 1)
+        {
+            currentStep--;
+        }
+    }
+
+    private void UpdateConnectionString()
+    {
+        if (databaseType == "localdb")
+        {
+            config.ConnectionString = "Server=(localdb)\\mssqllocaldb;Database=SCIMServer;Trusted_Connection=True;";
+        }
+        else if (databaseType == "sqlexpress" || databaseType == "sqlserver")
+        {
+            var server = string.IsNullOrWhiteSpace(serverName) 
+                ? (databaseType == "sqlexpress" ? ".\\SQLEXPRESS" : "localhost") 
+                : serverName;
+
+            if (authType == "windows")
+            {
+                config.ConnectionString = $"Server={server};Database=SCIMServer;Trusted_Connection=True;";
+            }
+            else
+            {
+                config.ConnectionString = $"Server={server};Database=SCIMServer;User Id={dbUsername};Password={dbPassword};";
+            }
+            
+            // Add encryption settings
+            if (!encryptConnection)
+            {
+                config.ConnectionString += "Encrypt=False;";
+            }
+            
+            // Add TrustServerCertificate if enabled
+            if (trustServerCertificate)
+            {
+                config.ConnectionString += "TrustServerCertificate=True;";
+            }
+        }
+    }
+
+    private async Task TestConnection()
+    {
+        testingConnection = true;
+        connectionTestResult = "";
+        
+        UpdateConnectionString();
+
+        try
+        {
+            var builder = new SqlConnectionStringBuilder(config.ConnectionString);
+            builder.InitialCatalog = "master";
+            builder.ConnectTimeout = 5;
+            
+            // Apply encryption settings
+            if (!encryptConnection)
+            {
+                builder.Encrypt = false;
+            }
+            
+            // Ensure TrustServerCertificate is set if enabled
+            if (trustServerCertificate)
+            {
+                builder.TrustServerCertificate = true;
+            }
+
+            using var connection = new SqlConnection(builder.ConnectionString);
+            await connection.OpenAsync();
+
+            connectionTestSuccess = true;
+            connectionTestResult = "Connection successful!";
+        }
+        catch (Exception ex)
+        {
+            connectionTestSuccess = false;
+            connectionTestResult = $"Connection failed: {ex.Message}";
+        }
+        finally
+        {
+            testingConnection = false;
+        }
+    }
+
+    private void GenerateSecretKey()
+    {
+        using var rng = RandomNumberGenerator.Create();
+        var bytes = new byte[64];
+        rng.GetBytes(bytes);
+        config.JwtSecretKey = Convert.ToBase64String(bytes);
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        isProcessing = true;
+        errors.Clear();
+
+        // Final validation
+        var validationResult = SetupService.ValidateSetup(config);
+        if (!validationResult.IsValid)
+        {
+            foreach (var errorList in validationResult.Errors.Values)
+            {
+                errors.AddRange(errorList);
+            }
+            isProcessing = false;
+            return;
+        }
+
+        // Apply setup
+        var success = await SetupService.ApplySetupAsync(config);
+        if (success)
+        {
+            setupComplete = true;
+            await Task.Delay(2000);
+            // Force a hard reload to ensure the application restarts and picks up the new configuration
+            await JSRuntime.InvokeVoidAsync("eval", "window.location.href = '/';");
+        }
+        else
+        {
+            errors.Add("Setup failed. Please check the logs for more information.");
+            isProcessing = false;
+        }
+    }
+}

@@ -1,0 +1,847 @@
+@page "/users"
+@using SCIMServer.Core.Models
+@using SCIMServer.DataAccess.Repositories
+@inject UserRepository UserRepository
+@inject GroupRepository GroupRepository
+@inject IJSRuntime JSRuntime
+
+<PageTitle>User Management</PageTitle>
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>User Management</h1>
+        <div>
+            @if (selectedUsers.Any())
+            {
+                <button class="btn btn-danger me-2" @onclick="BulkDeleteUsers">
+                    <i class="oi oi-trash"></i> Delete Selected (@selectedUsers.Count)
+                </button>
+            }
+            <button class="btn btn-warning me-2" @onclick="ShowDataCleanupModal">
+                <i class="oi oi-wrench"></i> Data Cleanup
+            </button>
+            <button class="btn btn-primary" @onclick="ShowCreateUserModal">
+                <i class="oi oi-plus"></i> Create User
+            </button>
+        </div>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>
+                            <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" checked="@allSelected" />
+                        </th>
+                        <th>Username</th>
+                        <th>Display Name</th>
+                        <th>Email</th>
+                        <th>Department</th>
+                        <th>Manager</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Groups</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var user in users)
+                    {
+                        <tr>
+                            <td>
+                                <input type="checkbox" class="form-check-input" value="@user.Id" 
+                                       checked="@selectedUsers.Contains(user.Id)" 
+                                       @onchange="@(() => ToggleUserSelection(user.Id))" />
+                            </td>
+                            <td>@user.UserName</td>
+                            <td>@user.DisplayName</td>
+                            <td>@user.Emails.FirstOrDefault(e => e.Primary)?.Value</td>
+                            <td>@user.EnterpriseExtension?.Department</td>
+                            <td>@user.EnterpriseExtension?.Manager?.DisplayName</td>
+                            <td>
+                                @if (user.Active)
+                                {
+                                    <span class="badge bg-success">Active</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-danger">Inactive</span>
+                                }
+                            </td>
+                            <td>@user.Meta.Created.ToString("yyyy-MM-dd")</td>
+                            <td>
+                                <button class="btn btn-sm btn-link text-decoration-none" @onclick="() => ShowUserGroupsModal(user)">
+                                    <i class="oi oi-badge"></i> View Groups
+                                </button>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-info" @onclick="() => ShowUserGroupsModal(user)" title="Manage Groups">
+                                    <i class="oi oi-badge"></i>
+                                </button>
+                                <button class="btn btn-sm btn-primary" @onclick="() => EditUser(user)" title="Edit User">
+                                    <i class="oi oi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" @onclick="() => DeleteUser(user)" title="Delete User">
+                                    <i class="oi oi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <nav>
+            <ul class="pagination">
+                <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => LoadUsers(currentPage - 1)">Previous</button>
+                </li>
+                @for (int i = 1; i <= totalPages; i++)
+                {
+                    var pageNum = i;
+                    <li class="page-item @(currentPage == pageNum ? "active" : "")">
+                        <button class="page-link" @onclick="() => LoadUsers(pageNum)">@pageNum</button>
+                    </li>
+                }
+                <li class="page-item @(currentPage == totalPages ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => LoadUsers(currentPage + 1)">Next</button>
+                </li>
+            </ul>
+        </nav>
+    }
+</div>
+
+<!-- Create/Edit User Modal -->
+<div class="modal @(showUserModal ? "show d-block" : "")" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">@(editingUser?.Id != null ? "Edit User" : "Create User")</h5>
+                <button type="button" class="btn-close" @onclick="CloseUserModal"></button>
+            </div>
+            <div class="modal-body">
+                <form>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Username *</label>
+                                <input type="text" class="form-control" @bind="editingUser!.UserName" />
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Display Name</label>
+                                <input type="text" class="form-control" @bind="editingUser.DisplayName" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Given Name</label>
+                                <input type="text" class="form-control" @bind="editingUser!.Name!.GivenName" />
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Family Name</label>
+                                <input type="text" class="form-control" @bind="editingUser.Name.FamilyName" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control" @bind="primaryEmail" />
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Department</label>
+                                <input type="text" class="form-control" @bind="editingUser!.EnterpriseExtension!.Department" />
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Employee Number</label>
+                                <input type="text" class="form-control" @bind="editingUser.EnterpriseExtension.EmployeeNumber" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" @bind="editingUser.Active" />
+                        <label class="form-check-label">Active</label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @onclick="CloseUserModal">Cancel</button>
+                <button type="button" class="btn btn-primary" @onclick="SaveUser">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+@if (showUserModal)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+<!-- User Groups Management Modal -->
+<div class="modal @(showUserGroupsModal ? "show d-block" : "")" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="oi oi-badge"></i> Groups for @currentUserForGroups?.DisplayName
+                </h5>
+                <button type="button" class="btn-close" @onclick="CloseUserGroupsModal"></button>
+            </div>
+            <div class="modal-body">
+                @if (currentUserForGroups != null)
+                {
+                    <!-- User's Current Groups -->
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h6 class="card-title">Current Group Memberships (@userGroups.Count)</h6>
+                            @if (!userGroups.Any())
+                            {
+                                <div class="alert alert-info mb-0">
+                                    <i class="oi oi-info"></i> This user is not a member of any groups.
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Group Name</th>
+                                                <th>Type</th>
+                                                <th>Role</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var groupMembership in userGroups)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        <strong>@groupMembership.GroupName</strong>
+                                                        @if (!string.IsNullOrEmpty(groupMembership.GroupDescription))
+                                                        {
+                                                            <br /><small class="text-muted">@groupMembership.GroupDescription</small>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge bg-secondary">@(groupMembership.GroupType ?? "Group")</span>
+                                                    </td>
+                                                    <td>
+                                                        @if (groupMembership.IsOwner)
+                                                        {
+                                                            <span class="badge bg-warning">Owner</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge bg-primary">Member</span>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveUserFromGroup(groupMembership)">
+                                                            <i class="oi oi-x"></i> Remove
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @onclick="CloseUserGroupsModal">Close</button>
+                @if (userGroupChangesPresent)
+                {
+                    <button type="button" class="btn btn-primary" @onclick="SaveUserGroupChanges">
+                        <i class="oi oi-check"></i> Save Changes
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showUserGroupsModal)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+<!-- Data Cleanup Modal -->
+<div class="modal @(showDataCleanupModal ? "show d-block" : "")" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="oi oi-wrench"></i> Data Cleanup Options
+                </h5>
+                <button type="button" class="btn-close" @onclick="CloseDataCleanupModal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="oi oi-warning"></i> <strong>Warning:</strong> These operations cannot be undone. Please be careful.
+                </div>
+                
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">Clear All Group Memberships</h6>
+                        <p class="card-text">Remove all users from all groups while keeping the groups themselves.</p>
+                        <button class="btn btn-outline-warning" @onclick="ClearAllMemberships" disabled="@cleanupInProgress">
+                            <i class="oi oi-layers"></i> Clear Memberships
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">Delete All Groups</h6>
+                        <p class="card-text">Delete all groups and their memberships.</p>
+                        <button class="btn btn-outline-danger" @onclick="DeleteAllGroups" disabled="@cleanupInProgress">
+                            <i class="oi oi-trash"></i> Delete All Groups
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">Delete All Users</h6>
+                        <p class="card-text">Delete all users and remove them from groups.</p>
+                        <button class="btn btn-outline-danger" @onclick="DeleteAllUsers" disabled="@cleanupInProgress">
+                            <i class="oi oi-trash"></i> Delete All Users
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-title text-danger">Complete Data Reset</h6>
+                        <p class="card-text">Delete all users, groups, and memberships. This will reset the system to empty state.</p>
+                        <button class="btn btn-danger" @onclick="CompleteDataReset" disabled="@cleanupInProgress">
+                            <i class="oi oi-warning"></i> Reset Everything
+                        </button>
+                    </div>
+                </div>
+                
+                @if (cleanupInProgress)
+                {
+                    <div class="text-center mt-3">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Processing...</span>
+                        </div>
+                        <p class="mt-2">@cleanupMessage</p>
+                    </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @onclick="CloseDataCleanupModal" disabled="@cleanupInProgress">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showDataCleanupModal)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private List<ScimUser> users = new();
+    private bool loading = true;
+    private int currentPage = 1;
+    private int pageSize = 10;
+    private int totalCount = 0;
+    private int totalPages = 1;
+    
+    private HashSet<string> selectedUsers = new();
+    private bool allSelected = false;
+
+    private bool showUserModal = false;
+    private ScimUser editingUser = new() 
+    { 
+        Name = new ScimName(), 
+        EnterpriseExtension = new ScimEnterpriseUser() 
+    };
+    private string primaryEmail = "";
+    
+    // User groups modal variables
+    private bool showUserGroupsModal = false;
+    private ScimUser? currentUserForGroups = null;
+    private List<UserGroupMembership> userGroups = new();
+    private bool userGroupChangesPresent = false;
+    
+    // Data cleanup modal variables
+    private bool showDataCleanupModal = false;
+    private bool cleanupInProgress = false;
+    private string cleanupMessage = "";
+    
+    public class UserGroupMembership
+    {
+        public string GroupId { get; set; } = "";
+        public string GroupName { get; set; } = "";
+        public string? GroupDescription { get; set; }
+        public string? GroupType { get; set; }
+        public bool IsOwner { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers(1);
+    }
+
+    private async Task LoadUsers(int page)
+    {
+        loading = true;
+        currentPage = page;
+
+        var options = new ScimQueryOptions
+        {
+            StartIndex = (page - 1) * pageSize + 1,
+            Count = pageSize
+        };
+
+        var (loadedUsers, count) = await UserRepository.GetAllAsync(options);
+        users = loadedUsers;
+        totalCount = count;
+        totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+        loading = false;
+    }
+
+    private void ShowCreateUserModal()
+    {
+        editingUser = new ScimUser
+        {
+            Name = new ScimName(),
+            EnterpriseExtension = new ScimEnterpriseUser()
+        };
+        primaryEmail = "";
+        showUserModal = true;
+    }
+
+    private void EditUser(ScimUser user)
+    {
+        editingUser = user; // In real app, deep clone
+        
+        // Ensure required properties are initialized
+        if (editingUser.Name == null)
+            editingUser.Name = new ScimName();
+        if (editingUser.EnterpriseExtension == null)
+            editingUser.EnterpriseExtension = new ScimEnterpriseUser();
+            
+        primaryEmail = user.Emails?.FirstOrDefault(e => e.Primary)?.Value ?? "";
+        showUserModal = true;
+    }
+
+    private void CloseUserModal()
+    {
+        showUserModal = false;
+        editingUser = new() 
+        { 
+            Name = new ScimName(), 
+            EnterpriseExtension = new ScimEnterpriseUser() 
+        };
+        primaryEmail = "";
+    }
+
+    private async Task SaveUser()
+    {
+        if (string.IsNullOrWhiteSpace(editingUser.UserName))
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Username is required");
+            return;
+        }
+
+        // Set email if provided
+        if (!string.IsNullOrWhiteSpace(primaryEmail))
+        {
+            editingUser.Emails.Clear();
+            editingUser.Emails.Add(new ScimEmail
+            {
+                Value = primaryEmail,
+                Type = "work",
+                Primary = true
+            });
+        }
+
+        try
+        {
+            if (string.IsNullOrEmpty(editingUser.Id))
+            {
+                await UserRepository.CreateAsync(editingUser);
+            }
+            else
+            {
+                await UserRepository.UpdateAsync(Guid.Parse(editingUser.Id), editingUser);
+            }
+
+            CloseUserModal();
+            await LoadUsers(currentPage);
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error saving user: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteUser(ScimUser user)
+    {
+        var confirm = await JSRuntime.InvokeAsync<bool>("confirm", $"Are you sure you want to delete user '{user.UserName}'?");
+        if (confirm)
+        {
+            try
+            {
+                await UserRepository.DeleteAsync(Guid.Parse(user.Id));
+                await LoadUsers(currentPage);
+            }
+            catch (Exception ex)
+            {
+                await JSRuntime.InvokeVoidAsync("alert", $"Error deleting user: {ex.Message}");
+            }
+        }
+    }
+
+    private void ToggleUserSelection(string userId)
+    {
+        if (selectedUsers.Contains(userId))
+        {
+            selectedUsers.Remove(userId);
+        }
+        else
+        {
+            selectedUsers.Add(userId);
+        }
+        
+        allSelected = selectedUsers.Count == users.Count;
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        if ((bool)(e.Value ?? false))
+        {
+            selectedUsers = new HashSet<string>(users.Select(u => u.Id));
+            allSelected = true;
+        }
+        else
+        {
+            selectedUsers.Clear();
+            allSelected = false;
+        }
+    }
+
+    private async Task BulkDeleteUsers()
+    {
+        if (!selectedUsers.Any())
+            return;
+
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
+            $"Are you sure you want to delete {selectedUsers.Count} selected users? This action cannot be undone.");
+        
+        if (!confirmed)
+            return;
+
+        loading = true;
+        
+        try
+        {
+            foreach (var userId in selectedUsers)
+            {
+                await UserRepository.DeleteAsync(Guid.Parse(userId));
+            }
+            
+            selectedUsers.Clear();
+            allSelected = false;
+            await LoadUsers(currentPage);
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error deleting users: {ex.Message}");
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+    
+    private async Task ShowUserGroupsModal(ScimUser user)
+    {
+        try
+        {
+            currentUserForGroups = user;
+            await LoadUserGroups();
+            userGroupChangesPresent = false;
+            showUserGroupsModal = true;
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error loading user groups: {ex.Message}");
+        }
+    }
+    
+    private async Task LoadUserGroups()
+    {
+        if (currentUserForGroups == null) return;
+        
+        try
+        {
+            userGroups.Clear();
+            
+            // Get all groups and find ones this user belongs to
+            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            
+            foreach (var group in allGroups)
+            {
+                // Check if user is a member
+                var isMember = group.Members?.Any(m => m.Value == currentUserForGroups.Id) ?? false;
+                // Check if user is the owner
+                var isOwner = group.Owner?.Value == currentUserForGroups.Id;
+                
+                if (isMember || isOwner)
+                {
+                    userGroups.Add(new UserGroupMembership
+                    {
+                        GroupId = group.Id,
+                        GroupName = group.DisplayName,
+                        GroupDescription = group.Description,
+                        GroupType = group.Type,
+                        IsOwner = isOwner
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading user groups: {ex.Message}");
+        }
+    }
+    
+    private async Task RemoveUserFromGroup(UserGroupMembership groupMembership)
+    {
+        if (currentUserForGroups == null) return;
+        
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
+            $"Remove {currentUserForGroups.DisplayName} from group '{groupMembership.GroupName}'?");
+            
+        if (!confirmed) return;
+        
+        try
+        {
+            var group = await GroupRepository.GetByIdAsync(Guid.Parse(groupMembership.GroupId));
+            if (group != null)
+            {
+                // Remove from members
+                group.Members = group.Members?.Where(m => m.Value != currentUserForGroups.Id).ToList() ?? new List<ScimGroupMember>();
+                
+                // Remove as owner if applicable
+                if (group.Owner?.Value == currentUserForGroups.Id)
+                {
+                    group.Owner = null;
+                }
+                
+                await GroupRepository.UpdateAsync(Guid.Parse(group.Id), group);
+                await LoadUserGroups();
+                userGroupChangesPresent = true;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error removing user from group: {ex.Message}");
+        }
+    }
+    
+    private void CloseUserGroupsModal()
+    {
+        showUserGroupsModal = false;
+        currentUserForGroups = null;
+        userGroups.Clear();
+        userGroupChangesPresent = false;
+    }
+    
+    private async Task SaveUserGroupChanges()
+    {
+        // Changes are already saved in real-time, just close modal
+        await JSRuntime.InvokeVoidAsync("alert", "Changes saved successfully!");
+        CloseUserGroupsModal();
+    }
+    
+    private void ShowDataCleanupModal()
+    {
+        showDataCleanupModal = true;
+    }
+    
+    private void CloseDataCleanupModal()
+    {
+        showDataCleanupModal = false;
+        cleanupInProgress = false;
+        cleanupMessage = "";
+    }
+    
+    private async Task ClearAllMemberships()
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
+            "Are you sure you want to clear all group memberships? This will remove all users from all groups but keep the groups.");
+            
+        if (!confirmed) return;
+        
+        cleanupInProgress = true;
+        cleanupMessage = "Clearing group memberships...";
+        StateHasChanged();
+        
+        try
+        {
+            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            
+            foreach (var group in allGroups)
+            {
+                group.Members?.Clear();
+                group.Owner = null;
+                await GroupRepository.UpdateAsync(Guid.Parse(group.Id), group);
+            }
+            
+            await JSRuntime.InvokeVoidAsync("alert", "All group memberships cleared successfully!");
+            CloseDataCleanupModal();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error clearing memberships: {ex.Message}");
+        }
+        finally
+        {
+            cleanupInProgress = false;
+        }
+    }
+    
+    private async Task DeleteAllGroups()
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
+            "Are you sure you want to delete ALL groups? This action cannot be undone.");
+            
+        if (!confirmed) return;
+        
+        cleanupInProgress = true;
+        cleanupMessage = "Deleting all groups...";
+        StateHasChanged();
+        
+        try
+        {
+            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            
+            foreach (var group in allGroups)
+            {
+                await GroupRepository.DeleteAsync(Guid.Parse(group.Id));
+            }
+            
+            await JSRuntime.InvokeVoidAsync("alert", $"Deleted {allGroups.Count} groups successfully!");
+            CloseDataCleanupModal();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error deleting groups: {ex.Message}");
+        }
+        finally
+        {
+            cleanupInProgress = false;
+        }
+    }
+    
+    private async Task DeleteAllUsers()
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
+            "Are you sure you want to delete ALL users? This action cannot be undone.");
+            
+        if (!confirmed) return;
+        
+        cleanupInProgress = true;
+        cleanupMessage = "Deleting all users...";
+        StateHasChanged();
+        
+        try
+        {
+            var (allUsers, _) = await UserRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            
+            foreach (var user in allUsers)
+            {
+                await UserRepository.DeleteAsync(Guid.Parse(user.Id));
+            }
+            
+            await JSRuntime.InvokeVoidAsync("alert", $"Deleted {allUsers.Count} users successfully!");
+            await LoadUsers(1);
+            CloseDataCleanupModal();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error deleting users: {ex.Message}");
+        }
+        finally
+        {
+            cleanupInProgress = false;
+        }
+    }
+    
+    private async Task CompleteDataReset()
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
+            "Are you absolutely sure you want to reset ALL data? This will delete all users, groups, and memberships. This action CANNOT be undone.");
+            
+        if (!confirmed) return;
+        
+        cleanupInProgress = true;
+        cleanupMessage = "Resetting all data...";
+        StateHasChanged();
+        
+        try
+        {
+            // Delete all users first
+            var (allUsers, _) = await UserRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            foreach (var user in allUsers)
+            {
+                await UserRepository.DeleteAsync(Guid.Parse(user.Id));
+            }
+            
+            // Delete all groups
+            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            foreach (var group in allGroups)
+            {
+                await GroupRepository.DeleteAsync(Guid.Parse(group.Id));
+            }
+            
+            await JSRuntime.InvokeVoidAsync("alert", $"Complete data reset successful! Deleted {allUsers.Count} users and {allGroups.Count} groups.");
+            await LoadUsers(1);
+            CloseDataCleanupModal();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error during data reset: {ex.Message}");
+        }
+        finally
+        {
+            cleanupInProgress = false;
+        }
+    }
+}

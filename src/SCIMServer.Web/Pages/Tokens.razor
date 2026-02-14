@@ -1,0 +1,349 @@
+@page "/tokens"
+@using SCIMServer.Web.Authentication
+@using SCIMServer.Web.Services
+@inject ApiTokenService ApiTokenService
+@inject NavigationManager Navigation
+
+<PageTitle>API Tokens - SCIM Server</PageTitle>
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1>API Tokens</h1>
+            <p class="text-muted">Manage authentication tokens for API access</p>
+        </div>
+        <button class="btn btn-primary" @onclick="ShowCreateTokenModal">
+            <i class="oi oi-plus"></i> Create Token
+        </button>
+    </div>
+
+    <div class="alert alert-warning">
+        <i class="oi oi-warning"></i> <strong>Security Notice:</strong> Treat API tokens like passwords. Never share them or commit them to source control.
+    </div>
+
+    @if (schemaError)
+    {
+        <div class="alert alert-danger">
+            <h4 class="alert-heading">Database Schema Error</h4>
+            <p>The API Tokens table is missing or has an incorrect schema. This usually happens when using a database created before this feature was added.</p>
+            <hr>
+            <p class="mb-0">
+                <strong>To fix this:</strong>
+                <ol>
+                    <li>Run the SQL script at <code>C:\Users\jacob\source\repos\SCIMServer\UpdateDatabase.sql</code> on your database, OR</li>
+                    <li>Go to <a href="/setup">Setup</a> and create a new database</li>
+                </ol>
+            </p>
+        </div>
+    }
+
+    @if (loading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else if (!tokens.Any())
+    {
+        <div class="alert alert-info">
+            <h4 class="alert-heading">No API Tokens</h4>
+            <p>You haven't created any API tokens yet.</p>
+            <hr>
+            <p class="mb-0">
+                <button class="btn btn-primary btn-sm" @onclick="ShowCreateTokenModal">
+                    <i class="oi oi-plus"></i> Create Your First Token
+                </button>
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Description</th>
+                                <th>Created</th>
+                                <th>Last Used</th>
+                                <th>Expires</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var token in tokens)
+                            {
+                                <tr>
+                                    <td>
+                                        <strong>@token.Name</strong>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">@(token.Description ?? "No description")</small>
+                                    </td>
+                                    <td>
+                                        <small>@token.CreatedAt.ToString("MMM dd, yyyy")</small>
+                                    </td>
+                                    <td>
+                                        @if (token.LastUsedAt.HasValue)
+                                        {
+                                            <small>@token.LastUsedAt.Value.ToString("MMM dd, yyyy")</small>
+                                        }
+                                        else
+                                        {
+                                            <small class="text-muted">Never</small>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (token.ExpiresAt.HasValue)
+                                        {
+                                            <small>@token.ExpiresAt.Value.ToString("MMM dd, yyyy")</small>
+                                        }
+                                        else
+                                        {
+                                            <small class="text-muted">Never</small>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (!token.IsActive)
+                                        {
+                                            <span class="badge bg-secondary">Inactive</span>
+                                        }
+                                        else if (token.ExpiresAt.HasValue && token.ExpiresAt.Value < DateTime.UtcNow)
+                                        {
+                                            <span class="badge bg-danger">Expired</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-success">Active</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (token.IsActive && (!token.ExpiresAt.HasValue || token.ExpiresAt.Value > DateTime.UtcNow))
+                                        {
+                                            <button class="btn btn-sm btn-outline-warning" @onclick="() => ToggleToken(token)">
+                                                <i class="oi oi-ban"></i> Deactivate
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" @onclick="() => ToggleToken(token)">
+                                                <i class="oi oi-check"></i> Activate
+                                            </button>
+                                        }
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteToken(token)">
+                                            <i class="oi oi-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Create Token Modal -->
+<div class="modal @(showCreateModal ? "show d-block" : "")" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create API Token</h5>
+                <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
+            </div>
+            <div class="modal-body">
+                <form>
+                    <div class="mb-3">
+                        <label class="form-label">Token Name *</label>
+                        <input type="text" class="form-control" @bind="newToken.Name" placeholder="e.g., Production API" />
+                        <small class="form-text text-muted">A descriptive name to identify this token</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" rows="3" @bind="newToken.Description" 
+                                  placeholder="What will this token be used for?"></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Expiration</label>
+                        <select class="form-select" @bind="expirationOption">
+                            <option value="never">Never expires</option>
+                            <option value="30">30 days</option>
+                            <option value="60">60 days</option>
+                            <option value="90">90 days</option>
+                            <option value="180">180 days</option>
+                            <option value="365">1 year</option>
+                        </select>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(generatedToken))
+                    {
+                        <div class="alert alert-success">
+                            <h6 class="alert-heading">Token Created Successfully!</h6>
+                            <p>Copy this token now. You won't be able to see it again.</p>
+                            <div class="input-group mb-2">
+                                <input type="text" class="form-control font-monospace" value="@generatedToken" readonly />
+                                <button class="btn btn-outline-secondary" type="button" @onclick="CopyToken">
+                                    <i class="oi oi-clipboard"></i> Copy
+                                </button>
+                            </div>
+                            <hr>
+                            <p class="mb-0 small">Use this token in the Authorization header: <code>Bearer @generatedToken</code></p>
+                        </div>
+                    }
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @onclick="CloseCreateModal">
+                    @(string.IsNullOrEmpty(generatedToken) ? "Cancel" : "Close")
+                </button>
+                @if (string.IsNullOrEmpty(generatedToken))
+                {
+                    <button type="button" class="btn btn-primary" @onclick="CreateToken" disabled="@string.IsNullOrWhiteSpace(newToken.Name)">
+                        Create Token
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showCreateModal)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private List<SCIMServer.Web.Services.ApiToken> tokens = new();
+    private bool loading = true;
+    private bool showCreateModal = false;
+    private bool schemaError = false;
+    private SCIMServer.Web.Services.ApiToken newToken = new();
+    private string generatedToken = "";
+    private string expirationOption = "never";
+
+    protected override Task OnInitializedAsync()
+    {
+        // Don't call LoadTokens here during pre-rendering
+        return Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadTokens();
+            StateHasChanged(); // Force re-render with loaded data
+        }
+    }
+
+    private async Task LoadTokens()
+    {
+        loading = true;
+        try
+        {
+            tokens = await ApiTokenService.GetAllTokensAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading tokens: {ex.Message}");
+            
+            // Check if it's a schema error
+            if (ex.Message.Contains("Invalid column name") || ex.Message.Contains("Invalid object name"))
+            {
+                schemaError = true;
+            }
+            
+            tokens = new List<SCIMServer.Web.Services.ApiToken>();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void ShowCreateTokenModal()
+    {
+        newToken = new SCIMServer.Web.Services.ApiToken();
+        generatedToken = "";
+        expirationOption = "never";
+        showCreateModal = true;
+    }
+
+    private void CloseCreateModal()
+    {
+        showCreateModal = false;
+        newToken = new SCIMServer.Web.Services.ApiToken();
+        generatedToken = "";
+    }
+
+    private async Task CreateToken()
+    {
+        if (string.IsNullOrWhiteSpace(newToken.Name))
+        {
+            return;
+        }
+
+        // Set expiration based on selection
+        if (expirationOption != "never")
+        {
+            newToken.ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(expirationOption));
+        }
+
+        try
+        {
+            generatedToken = await ApiTokenService.CreateTokenAsync(newToken.Name, newToken.Description, newToken.ExpiresAt);
+            await LoadTokens();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating token: {ex.Message}");
+        }
+    }
+
+    private async Task ToggleToken(SCIMServer.Web.Services.ApiToken token)
+    {
+        try
+        {
+            await ApiTokenService.ToggleTokenAsync(token.Id);
+            await LoadTokens();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error toggling token: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteToken(SCIMServer.Web.Services.ApiToken token)
+    {
+        if (!await JSRuntime.InvokeAsync<bool>("confirm", $"Are you sure you want to delete the token '{token.Name}'?"))
+        {
+            return;
+        }
+
+        try
+        {
+            await ApiTokenService.DeleteTokenAsync(token.Id);
+            await LoadTokens();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error deleting token: {ex.Message}");
+        }
+    }
+
+    private async Task CopyToken()
+    {
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", generatedToken);
+    }
+
+    [Inject]
+    private IJSRuntime JSRuntime { get; set; } = default!;
+}

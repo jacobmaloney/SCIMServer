@@ -1,0 +1,275 @@
+@page "/api-explorer"
+@inject NavigationManager Navigation
+
+<PageTitle>API Explorer - SCIM Server</PageTitle>
+
+<div class="container-fluid">
+    <h1>API Explorer</h1>
+    <p class="lead">Explore and test SCIM API endpoints interactively</p>
+
+    <div class="row">
+        <div class="col-lg-4">
+            <!-- Endpoint List -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">SCIM Endpoints</h5>
+                </div>
+                <div class="list-group list-group-flush">
+                    <button class="list-group-item list-group-item-action @(selectedEndpoint == "users" ? "active" : "")" 
+                            @onclick='() => SelectEndpoint("users")'>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>/scim/v2/Users</strong>
+                                <br />
+                                <small class="text-muted">User management endpoints</small>
+                            </div>
+                            <i class="oi oi-person"></i>
+                        </div>
+                    </button>
+                    
+                    <button class="list-group-item list-group-item-action @(selectedEndpoint == "groups" ? "active" : "")" 
+                            @onclick='() => SelectEndpoint("groups")'>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>/scim/v2/Groups</strong>
+                                <br />
+                                <small class="text-muted">Group management endpoints</small>
+                            </div>
+                            <i class="oi oi-people"></i>
+                        </div>
+                    </button>
+                    
+                    <button class="list-group-item list-group-item-action @(selectedEndpoint == "schemas" ? "active" : "")" 
+                            @onclick='() => SelectEndpoint("schemas")'>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>/scim/v2/Schemas</strong>
+                                <br />
+                                <small class="text-muted">SCIM schema definitions</small>
+                            </div>
+                            <i class="oi oi-book"></i>
+                        </div>
+                    </button>
+                    
+                    <button class="list-group-item list-group-item-action @(selectedEndpoint == "service-provider" ? "active" : "")" 
+                            @onclick='() => SelectEndpoint("service-provider")'>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>/scim/v2/ServiceProviderConfig</strong>
+                                <br />
+                                <small class="text-muted">Service provider configuration</small>
+                            </div>
+                            <i class="oi oi-cog"></i>
+                        </div>
+                    </button>
+                    
+                    <button class="list-group-item list-group-item-action @(selectedEndpoint == "resource-types" ? "active" : "")" 
+                            @onclick='() => SelectEndpoint("resource-types")'>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>/scim/v2/ResourceTypes</strong>
+                                <br />
+                                <small class="text-muted">Supported resource types</small>
+                            </div>
+                            <i class="oi oi-list"></i>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Authentication -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0">Authentication</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">API Token</label>
+                        <input type="text" class="form-control" @bind="apiToken" 
+                               placeholder="scim_xxxxx or Bearer token" />
+                        <small class="form-text text-muted">Enter your API token for authenticated requests</small>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" @bind="includeAuth" id="authCheck">
+                        <label class="form-check-label" for="authCheck">
+                            Include authentication header
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            @if (selectedEndpoint == "users")
+            {
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">User Endpoints</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>Available Operations:</h6>
+                        <div class="list-group mb-4">
+                            <div class="list-group-item">
+                                <span class="badge bg-primary me-2">GET</span>
+                                /scim/v2/Users - List all users
+                            </div>
+                            <div class="list-group-item">
+                                <span class="badge bg-primary me-2">GET</span>
+                                /scim/v2/Users/{id} - Get user by ID
+                            </div>
+                            <div class="list-group-item">
+                                <span class="badge bg-success me-2">POST</span>
+                                /scim/v2/Users - Create a new user
+                            </div>
+                            <div class="list-group-item">
+                                <span class="badge bg-warning text-dark me-2">PUT</span>
+                                /scim/v2/Users/{id} - Replace user
+                            </div>
+                            <div class="list-group-item">
+                                <span class="badge bg-info text-dark me-2">PATCH</span>
+                                /scim/v2/Users/{id} - Update user
+                            </div>
+                            <div class="list-group-item">
+                                <span class="badge bg-danger me-2">DELETE</span>
+                                /scim/v2/Users/{id} - Delete user
+                            </div>
+                        </div>
+
+                        <h6>Example: Create User Request</h6>
+                        <pre class="bg-light p-3"><code>POST /scim/v2/Users
+Content-Type: application/scim+json
+
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "userName": "john.doe@example.com",
+  "name": {
+    "givenName": "John",
+    "familyName": "Doe"
+  },
+  "emails": [
+    {
+      "value": "john.doe@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "active": true
+}</code></pre>
+
+                        <h6 class="mt-4">Query Parameters (GET /Users):</h6>
+                        <ul>
+                            <li>filter - SCIM filter expression (e.g., userName eq "john")</li>
+                            <li>startIndex - 1-based index of the first result</li>
+                            <li>count - Number of results per page</li>
+                            <li>attributes - Comma-separated list of attributes to return</li>
+                            <li>excludedAttributes - Comma-separated list of attributes to exclude</li>
+                        </ul>
+                    </div>
+                </div>
+            }
+            else if (selectedEndpoint == "groups")
+            {
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Group Endpoints</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>Available Operations:</h6>
+                        <p>Similar to User endpoints, Groups support GET, POST, PUT, PATCH, and DELETE operations.</p>
+                        
+                        <h6>Example: Create Group Request</h6>
+                        <pre class="bg-light p-3"><code>POST /scim/v2/Groups
+Content-Type: application/scim+json
+
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+  "displayName": "Engineering Team",
+  "members": [
+    {
+      "value": "2819c223-7f76-453a-919d-413861904646",
+      "$ref": "/scim/v2/Users/2819c223-7f76-453a-919d-413861904646",
+      "type": "User"
+    }
+  ]
+}</code></pre>
+                    </div>
+                </div>
+            }
+            else if (selectedEndpoint == "schemas")
+            {
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Schema Endpoints</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>The Schemas endpoint returns the SCIM schema definitions supported by this server.</p>
+                        
+                        <h6>Supported Schemas:</h6>
+                        <ul>
+                            <li>urn:ietf:params:scim:schemas:core:2.0:User</li>
+                            <li>urn:ietf:params:scim:schemas:core:2.0:Group</li>
+                            <li>urn:ietf:params:scim:schemas:extension:enterprise:2.0:User</li>
+                        </ul>
+                    </div>
+                </div>
+            }
+            else if (selectedEndpoint == "service-provider")
+            {
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Service Provider Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>Returns the service provider's configuration, including supported operations and authentication schemes.</p>
+                        
+                        <h6>Configuration includes:</h6>
+                        <ul>
+                            <li>Supported authentication schemes</li>
+                            <li>Bulk operation support</li>
+                            <li>Filter capabilities</li>
+                            <li>Change password support</li>
+                            <li>Sort and pagination support</li>
+                        </ul>
+                    </div>
+                </div>
+            }
+            else if (selectedEndpoint == "resource-types")
+            {
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Resource Types</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>Returns the types of resources available (User and Group) and their schemas.</p>
+                        
+                        <h6>Supported Resource Types:</h6>
+                        <ul>
+                            <li>User - Individual user accounts</li>
+                            <li>Group - Collections of users</li>
+                        </ul>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-info">
+                    <h4 class="alert-heading">Welcome to the SCIM API Explorer</h4>
+                    <p>Select an endpoint from the left panel to explore available operations and test API calls.</p>
+                    <hr>
+                    <p class="mb-0">All requests follow the SCIM 2.0 protocol specification.</p>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string selectedEndpoint = "";
+    private string apiToken = "";
+    private bool includeAuth = false;
+
+    private void SelectEndpoint(string endpoint)
+    {
+        selectedEndpoint = endpoint;
+    }
+}
