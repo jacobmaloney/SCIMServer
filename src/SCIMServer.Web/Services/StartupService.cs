@@ -74,8 +74,8 @@ namespace SCIMServer.Web.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during startup checks");
-                _lifetime.StopApplication();
+                _logger.LogWarning(ex, "Error during startup checks, setup may be required");
+                // Don't stop — let SetupMiddleware redirect to /setup
             }
         }
 

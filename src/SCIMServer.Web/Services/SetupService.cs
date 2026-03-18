@@ -14,15 +14,17 @@ namespace SCIMServer.Web.Services
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<SetupService> _logger;
+        private readonly DatabaseConfig _databaseConfig;
         private readonly string _setupCompleteFile = "setup.complete";
 
         /// <summary>
         /// Initializes a new instance of the SetupService class
         /// </summary>
-        public SetupService(IConfiguration configuration, ILogger<SetupService> logger)
+        public SetupService(IConfiguration configuration, ILogger<SetupService> logger, DatabaseConfig databaseConfig)
         {
             _configuration = configuration;
             _logger = logger;
+            _databaseConfig = databaseConfig;
         }
 
         /// <summary>
@@ -30,17 +32,17 @@ namespace SCIMServer.Web.Services
         /// </summary>
         public async Task<bool> IsSetupRequiredAsync()
         {
+            // Even if setup.complete exists, verify the connection string is real (not a placeholder)
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrWhiteSpace(connectionString) || IsPlaceholderConnectionString(connectionString))
+            {
+                return true;
+            }
+
             // Check if setup has already been completed
             if (File.Exists(_setupCompleteFile))
             {
                 return false;
-            }
-
-            // Check if database exists and is accessible
-            var connectionString = _configuration.GetConnectionString("DefaultConnection");
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                return true;
             }
 
             try
@@ -100,6 +102,20 @@ namespace SCIMServer.Web.Services
         }
 
         /// <summary>
+        /// Checks if a connection string is a placeholder/template value
+        /// </summary>
+        private static bool IsPlaceholderConnectionString(string connectionString)
+        {
+            var upper = connectionString.ToUpperInvariant();
+            return upper.Contains("YOUR_SERVER") ||
+                   upper.Contains("YOUR_USER") ||
+                   upper.Contains("YOUR_PASSWORD") ||
+                   upper.Contains("YOUR_DATABASE") ||
+                   upper.Contains("(LOCALDB)") ||
+                   upper.Contains("**");
+        }
+
+        /// <summary>
         /// Validates the setup configuration
         /// </summary>
         public SetupValidationResult ValidateSetup(SetupConfiguration config)
@@ -143,19 +159,16 @@ namespace SCIMServer.Web.Services
         {
             try
             {
-                // Initialize database
-                var dbConfig = new DatabaseConfig
-                {
-                    ConnectionString = config.ConnectionString,
-                    AutoCreateDatabase = true,
-                    AutoMigrate = true
-                };
+                // Update the live singleton so the rest of the app uses the new connection string
+                _databaseConfig.SetConnectionString(config.ConnectionString);
+                _databaseConfig.AutoCreateDatabase = true;
+                _databaseConfig.AutoMigrate = true;
 
                 // Create logger factory for DatabaseInitializer
                 using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
                 var dbLogger = loggerFactory.CreateLogger<DatabaseInitializer>();
-                
-                var initializer = new DatabaseInitializer(dbConfig, dbLogger);
+
+                var initializer = new DatabaseInitializer(_databaseConfig, dbLogger);
                 await initializer.InitializeAsync();
 
                 // Update configuration

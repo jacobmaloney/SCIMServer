@@ -31,5 +31,13 @@ namespace SCIMServer.DataAccess
         /// Gets or sets whether to enable query logging
         /// </summary>
         public bool EnableQueryLogging { get; set; } = false;
+
+        /// <summary>
+        /// Updates the connection string at runtime (used by setup wizard)
+        /// </summary>
+        public void SetConnectionString(string connectionString)
+        {
+            ConnectionString = connectionString;
+        }
     }
 }

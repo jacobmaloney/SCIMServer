@@ -17,12 +17,11 @@ builder.Services.AddControllers()
 
 // Configure database
 builder.Services.Configure<DatabaseConfig>(builder.Configuration.GetSection("Database"));
-builder.Services.AddSingleton<DatabaseConfig>(sp => 
+builder.Services.AddSingleton<DatabaseConfig>(sp =>
 {
     var config = new DatabaseConfig();
     builder.Configuration.GetSection("Database").Bind(config);
-    config.ConnectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
-        ?? throw new InvalidOperationException("Database connection string is required. Please configure it in appsettings.json");
+    config.ConnectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? string.Empty;
     return config;
 });
 
@@ -90,8 +89,18 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var setupService = scope.ServiceProvider.GetRequiredService<SetupService>();
-    var setupRequired = await setupService.IsSetupRequiredAsync();
-    
+    bool setupRequired;
+    try
+    {
+        setupRequired = await setupService.IsSetupRequiredAsync();
+    }
+    catch (Exception ex)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning(ex, "Could not check setup status, assuming setup required");
+        setupRequired = true;
+    }
+
     // Only initialize database if setup is complete
     if (!setupRequired)
     {
