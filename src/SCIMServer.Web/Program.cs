@@ -124,6 +124,10 @@ app.UseRouting();
 app.UseSetupCheck();
 
 app.UseCors("SCIMPolicy");
+
+// Authenticate scim_ API tokens before the JWT handler runs
+app.UseMiddleware<ApiTokenAuthMiddleware>();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
