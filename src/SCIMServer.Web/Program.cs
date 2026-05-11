@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using SCIMServer.DataAccess;
@@ -36,11 +37,37 @@ if (string.IsNullOrEmpty(jwtConfig.SecretKey))
     jwtConfig.SecretKey = "ThisIsADefaultSecretKeyForDevelopmentOnly-ChangeInProduction!";
 }
 
-// Configure authentication
+// Configure authentication. Browser sessions use a cookie; API requests with a Bearer
+// header forward to JWT. The SmartAuth policy scheme picks per-request based on headers,
+// so existing [Authorize] controllers continue to validate JWTs unchanged.
+const string SmartAuthScheme = "SmartAuth";
 builder.Services.AddAuthentication(options =>
 {
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultScheme = SmartAuthScheme;
+    options.DefaultChallengeScheme = SmartAuthScheme;
+})
+.AddPolicyScheme(SmartAuthScheme, SmartAuthScheme, options =>
+{
+    options.ForwardDefaultSelector = context =>
+    {
+        var authHeader = context.Request.Headers["Authorization"].ToString();
+        if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            return JwtBearerDefaults.AuthenticationScheme;
+        }
+        return CookieAuthenticationDefaults.AuthenticationScheme;
+    };
+})
+.AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+{
+    options.LoginPath = "/login";
+    options.LogoutPath = "/logout";
+    options.AccessDeniedPath = "/login";
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    options.SlidingExpiration = true;
+    options.Cookie.Name = "scim.admin";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
 })
 .AddJwtBearer(options =>
 {
@@ -56,6 +83,10 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
+// NOTE: No FallbackPolicy here. A fallback "require auth" policy also applies to /_blazor
+// (the Blazor Server SignalR hub), which would break the interactive circuit on anonymous
+// pages like /setup and /login. Each Blazor page uses @attribute [Authorize] explicitly;
+// SCIM API controllers use [Authorize] explicitly.
 builder.Services.AddAuthorization();
 
 // Register services
@@ -66,6 +97,7 @@ builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<ApiTokenService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<SetupService>();
+builder.Services.AddScoped<LoginService>();
 builder.Services.AddScoped<SCIMServer.Core.Services.UserGenerationService>();
 builder.Services.AddSingleton<ApplicationLogService>();
 builder.Services.AddSingleton<GenerationService>();
@@ -101,11 +133,22 @@ using (var scope = app.Services.CreateScope())
         setupRequired = true;
     }
 
-    // Only initialize database if setup is complete
+    // Only initialize database if setup is complete. If this fails (e.g. the server
+    // moved or credentials changed since last run), do NOT crash startup — the user
+    // needs the app running to reach /setup and fix the connection.
     if (!setupRequired)
     {
         var dbInitializer = scope.ServiceProvider.GetRequiredService<DatabaseInitializer>();
-        await dbInitializer.InitializeAsync();
+        try
+        {
+            await dbInitializer.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "Database initialization failed at startup; routing user to /setup");
+            SetupMiddleware.ClearCache();
+        }
     }
 }
 

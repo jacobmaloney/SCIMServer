@@ -1,8 +1,9 @@
 ﻿@page "/"
 @namespace SCIMServer.Web.Pages
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
 @{
     Layout = "_Layout";
 }
 
-<component type="typeof(App)" render-mode="ServerPrerendered" />
+<component type="typeof(App)" render-mode="Server" />

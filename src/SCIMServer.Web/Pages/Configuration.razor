@@ -1,4 +1,5 @@
 @page "/configuration"
+@attribute [Authorize]
 @using Microsoft.Extensions.Configuration
 @using SCIMServer.DataAccess
 @using SCIMServer.Web.Authentication
@@ -148,6 +149,9 @@
                         <button class="btn btn-outline-secondary" @onclick="ExportConfiguration">
                             <i class="oi oi-data-transfer-download"></i> Export Configuration
                         </button>
+                        <a href="/database-settings" class="btn btn-outline-primary">
+                            <i class="oi oi-hard-drive"></i> Change SQL Server
+                        </a>
                         <a href="/setup" class="btn btn-outline-warning">
                             <i class="oi oi-wrench"></i> Re-run Setup
                         </a>

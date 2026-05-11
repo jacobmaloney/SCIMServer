@@ -459,3 +459,6 @@ appsettings.Production.json
 *.db-wal
 installer/output/
 dist/
+
+# Setup marker is per-install state, not source
+setup.complete

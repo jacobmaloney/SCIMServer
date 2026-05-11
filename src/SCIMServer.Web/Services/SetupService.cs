@@ -39,20 +39,203 @@ namespace SCIMServer.Web.Services
                 return true;
             }
 
-            // Check if setup has already been completed
-            if (File.Exists(_setupCompleteFile))
-            {
-                return false;
-            }
-
+            // Always probe the database — a stale setup.complete marker (e.g. copied from another
+            // machine, or pointing at a now-unreachable server) must not let us skip setup.
             try
             {
-                return !await IsDatabaseConfiguredAsync(connectionString);
+                var configured = await IsDatabaseConfiguredAsync(connectionString);
+                if (!configured)
+                {
+                    return true;
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Could not connect to database, setup required");
                 return true;
+            }
+
+            return !File.Exists(_setupCompleteFile);
+        }
+
+        /// <summary>
+        /// Tests a connection string and reports whether the server is reachable,
+        /// whether the target database exists, and whether the schema is present.
+        /// </summary>
+        public async Task<ConnectionTestResult> TestConnectionAsync(string connectionString)
+        {
+            var result = new ConnectionTestResult();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                result.ErrorMessage = "Connection string is empty.";
+                return result;
+            }
+
+            SqlConnectionStringBuilder builder;
+            try
+            {
+                builder = new SqlConnectionStringBuilder(connectionString) { ConnectTimeout = 5 };
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = $"Invalid connection string: {ex.Message}";
+                return result;
+            }
+
+            result.DatabaseName = builder.InitialCatalog;
+            var targetBuilder = new SqlConnectionStringBuilder(builder.ConnectionString);
+            builder.InitialCatalog = "master";
+
+            try
+            {
+                using var connection = new SqlConnection(builder.ConnectionString);
+                await connection.OpenAsync();
+                result.ServerReachable = true;
+
+                if (string.IsNullOrWhiteSpace(result.DatabaseName))
+                {
+                    result.ErrorMessage = "No database name specified in connection string.";
+                    return result;
+                }
+
+                var dbExistsQuery = "SELECT COUNT(*) FROM sys.databases WHERE name = @name";
+                using var cmd = new SqlCommand(dbExistsQuery, connection);
+                cmd.Parameters.AddWithValue("@name", result.DatabaseName);
+                var raw = await cmd.ExecuteScalarAsync();
+                result.DatabaseExists = raw is int count && count > 0;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+                return result;
+            }
+
+            if (!result.DatabaseExists)
+            {
+                return result;
+            }
+
+            try
+            {
+                using var dbConnection = new SqlConnection(targetBuilder.ConnectionString);
+                await dbConnection.OpenAsync();
+                var tableQuery = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Users'";
+                using var tableCmd = new SqlCommand(tableQuery, dbConnection);
+                var tableRaw = await tableCmd.ExecuteScalarAsync();
+                result.SchemaExists = tableRaw is int tableCount && tableCount > 0;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = $"Database '{result.DatabaseName}' exists but could not be opened: {ex.Message}";
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Updates only the database connection string in appsettings.{Environment}.json
+        /// while preserving other sections. Also updates the live DatabaseConfig singleton.
+        /// </summary>
+        public async Task<(bool Success, string Message)> UpdateConnectionStringAsync(string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return (false, "Connection string is empty.");
+            }
+
+            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
+            var configFileName = environment == "Development"
+                ? "appsettings.Development.json"
+                : "appsettings.Production.json";
+            var configPath = Path.Combine(Directory.GetCurrentDirectory(), configFileName);
+
+            try
+            {
+                System.Text.Json.Nodes.JsonObject root;
+                if (File.Exists(configPath))
+                {
+                    var existing = await File.ReadAllTextAsync(configPath);
+                    root = string.IsNullOrWhiteSpace(existing)
+                        ? new System.Text.Json.Nodes.JsonObject()
+                        : System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
+                }
+                else
+                {
+                    root = new System.Text.Json.Nodes.JsonObject();
+                }
+
+                if (root["ConnectionStrings"] is not System.Text.Json.Nodes.JsonObject conn)
+                {
+                    conn = new System.Text.Json.Nodes.JsonObject();
+                    root["ConnectionStrings"] = conn;
+                }
+                conn["DefaultConnection"] = connectionString;
+
+                var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                await File.WriteAllTextAsync(configPath, root.ToJsonString(opts));
+
+                _databaseConfig.SetConnectionString(connectionString);
+                return (true, $"Connection string saved to {configFileName}.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update connection string in {ConfigPath}", configPath);
+                return (false, $"Failed to save: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Creates the target database on the server identified by the connection string.
+        /// No-op if the database already exists.
+        /// </summary>
+        public async Task<(bool Success, string Message)> CreateDatabaseAsync(string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return (false, "Connection string is empty.");
+            }
+
+            SqlConnectionStringBuilder builder;
+            try
+            {
+                builder = new SqlConnectionStringBuilder(connectionString) { ConnectTimeout = 10 };
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Invalid connection string: {ex.Message}");
+            }
+
+            var databaseName = builder.InitialCatalog;
+            if (string.IsNullOrWhiteSpace(databaseName))
+            {
+                return (false, "No database name specified in connection string.");
+            }
+
+            builder.InitialCatalog = "master";
+
+            try
+            {
+                using var connection = new SqlConnection(builder.ConnectionString);
+                await connection.OpenAsync();
+
+                var exists = await Dapper.SqlMapper.QuerySingleAsync<int>(connection,
+                    "SELECT COUNT(*) FROM sys.databases WHERE name = @name",
+                    new { name = databaseName }) > 0;
+
+                if (exists)
+                {
+                    return (true, $"Database '{databaseName}' already exists.");
+                }
+
+                var escapedName = databaseName.Replace("]", "]]");
+                await Dapper.SqlMapper.ExecuteAsync(connection, $"CREATE DATABASE [{escapedName}]");
+                _logger.LogInformation("Created database {DatabaseName}", databaseName);
+                return (true, $"Database '{databaseName}' created.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create database {DatabaseName}", databaseName);
+                return (false, $"Failed to create database: {ex.Message}");
             }
         }
 
@@ -161,7 +344,7 @@ namespace SCIMServer.Web.Services
             {
                 // Update the live singleton so the rest of the app uses the new connection string
                 _databaseConfig.SetConnectionString(config.ConnectionString);
-                _databaseConfig.AutoCreateDatabase = true;
+                _databaseConfig.AutoCreateDatabase = config.AutoCreateDatabase;
                 _databaseConfig.AutoMigrate = true;
 
                 // Create logger factory for DatabaseInitializer
@@ -251,13 +434,43 @@ namespace SCIMServer.Web.Services
         }
 
         /// <summary>
-        /// Creates the admin user
+        /// Creates (or updates) the portal administrator account in the Users table.
+        /// Password is hashed with PBKDF2 and stored in PasswordHash/PasswordSalt.
         /// </summary>
-        private Task CreateAdminUserAsync(SetupConfiguration config)
+        private async Task CreateAdminUserAsync(SetupConfiguration config)
         {
-            // In a real implementation, this would create the admin user in the database
-            _logger.LogInformation("Creating admin user: {Username}", config.AdminUsername);
-            return Task.CompletedTask;
+            var (hash, salt) = PasswordHasher.Hash(config.AdminPassword);
+
+            using var connection = new SqlConnection(_databaseConfig.ConnectionString);
+            await connection.OpenAsync();
+
+            var existingId = await Dapper.SqlMapper.QuerySingleOrDefaultAsync<Guid?>(connection,
+                "SELECT [Id] FROM [Users] WHERE [UserName] = @UserName",
+                new { UserName = config.AdminUsername });
+
+            if (existingId.HasValue)
+            {
+                await Dapper.SqlMapper.ExecuteAsync(connection, @"
+                    UPDATE [Users]
+                    SET [PasswordHash] = @Hash, [PasswordSalt] = @Salt, [IsAdmin] = 1, [Active] = 1, [LastModified] = SYSUTCDATETIME()
+                    WHERE [Id] = @Id",
+                    new { Hash = hash, Salt = salt, Id = existingId.Value });
+                _logger.LogInformation("Updated existing admin user: {Username}", config.AdminUsername);
+            }
+            else
+            {
+                await Dapper.SqlMapper.ExecuteAsync(connection, @"
+                    INSERT INTO [Users] ([Id], [UserName], [Active], [DisplayName], [PasswordHash], [PasswordSalt], [IsAdmin])
+                    VALUES (NEWID(), @UserName, 1, @DisplayName, @Hash, @Salt, 1)",
+                    new
+                    {
+                        UserName = config.AdminUsername,
+                        DisplayName = config.AdminUsername,
+                        Hash = hash,
+                        Salt = salt
+                    });
+                _logger.LogInformation("Created admin user: {Username}", config.AdminUsername);
+            }
         }
     }
 
@@ -274,6 +487,19 @@ namespace SCIMServer.Web.Services
         public string? JwtAudience { get; set; }
         public int ServerPort { get; set; } = 5000;
         public bool UseHttps { get; set; } = false;
+        public bool AutoCreateDatabase { get; set; } = true;
+    }
+
+    /// <summary>
+    /// Result of probing a database connection string.
+    /// </summary>
+    public class ConnectionTestResult
+    {
+        public bool ServerReachable { get; set; }
+        public bool DatabaseExists { get; set; }
+        public bool SchemaExists { get; set; }
+        public string DatabaseName { get; set; } = string.Empty;
+        public string? ErrorMessage { get; set; }
     }
 
     /// <summary>

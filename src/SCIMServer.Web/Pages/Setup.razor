@@ -1,7 +1,6 @@
 @page "/setup"
 @using SCIMServer.Web.Services
 @using System.Security.Cryptography
-@using Microsoft.Data.SqlClient
 @inject SetupService SetupService
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
@@ -82,12 +81,31 @@
                                     </select>
                                 </div>
 
+                                @if (databaseType == "localdb")
+                                {
+                                    <div class="mb-3">
+                                        <label class="form-label">Database Name</label>
+                                        <input type="text" class="form-control" @bind="databaseName" placeholder="SCIMServer" />
+                                        <small class="form-text text-muted">
+                                            Defaults to <code>SCIMServer</code>. Use suffixes like <code>SCIMServerUSA1</code> to run multiple instances side-by-side.
+                                        </small>
+                                    </div>
+                                }
+
                                 @if (databaseType == "sqlexpress" || databaseType == "sqlserver")
                                 {
                                     <div class="mb-3">
                                         <label class="form-label">Server Name</label>
-                                        <input type="text" class="form-control" @bind="serverName" 
+                                        <input type="text" class="form-control" @bind="serverName"
                                                placeholder="@(databaseType == "sqlexpress" ? ".\\SQLEXPRESS" : "localhost")" />
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label">Database Name</label>
+                                        <input type="text" class="form-control" @bind="databaseName" placeholder="SCIMServer" />
+                                        <small class="form-text text-muted">
+                                            Defaults to <code>SCIMServer</code>. Use suffixes like <code>SCIMServerUSA1</code>, <code>SCIMServerUSA2</code> to run multiple instances side-by-side on one server.
+                                        </small>
                                     </div>
 
                                     <div class="mb-3">
@@ -148,11 +166,13 @@
                                         }
                                         Test Connection
                                     </button>
-                                    @if (!string.IsNullOrEmpty(connectionTestResult))
+                                    @if (connectionTest != null)
                                     {
-                                        <div class="mt-2 alert @(connectionTestSuccess ? "alert-success" : "alert-danger") py-2">
-                                            @connectionTestResult
-                                            @if (connectionTestResult.Contains("SSPI") || connectionTestResult.Contains("principal name"))
+                                        var alertClass = GetTestAlertClass();
+                                        <div class="mt-2 alert @alertClass py-2">
+                                            @GetTestMessage()
+                                            @if (!connectionTest.ServerReachable && !string.IsNullOrEmpty(connectionTest.ErrorMessage) &&
+                                                 (connectionTest.ErrorMessage.Contains("SSPI") || connectionTest.ErrorMessage.Contains("principal name")))
                                             {
                                                 <hr class="my-2" />
                                                 <small>
@@ -164,6 +184,31 @@
                                                         <li>Check if SQL Server Browser service is running</li>
                                                     </ul>
                                                 </small>
+                                            }
+                                            @if (connectionTest.ServerReachable && !connectionTest.DatabaseExists && !string.IsNullOrWhiteSpace(connectionTest.DatabaseName))
+                                            {
+                                                <hr class="my-2" />
+                                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                    <button type="button" class="btn btn-sm btn-warning" @onclick="CreateDatabaseNow" disabled="@creatingDatabase">
+                                                        @if (creatingDatabase)
+                                                        {
+                                                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                                        }
+                                                        Create Database Now
+                                                    </button>
+                                                    <div class="form-check ms-2 mb-0">
+                                                        <input type="checkbox" class="form-check-input" id="autoCreateDb" @bind="autoCreateDatabase" />
+                                                        <label class="form-check-label" for="autoCreateDb">
+                                                            Create on setup completion
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                @if (!string.IsNullOrEmpty(createDatabaseMessage))
+                                                {
+                                                    <div class="small mt-2 @(createDatabaseSuccess ? "text-success" : "text-danger")">
+                                                        @createDatabaseMessage
+                                                    </div>
+                                                }
                                             }
                                         </div>
                                     }
@@ -233,7 +278,7 @@
                                 <p class="text-muted">Please review your settings before completing setup.</p>
 
                                 <dl class="row">
-                                    <dt class="col-sm-4">Database</dt>
+                                    <dt class="col-sm-4">Server</dt>
                                     <dd class="col-sm-8">
                                         @if (databaseType == "localdb")
                                         {
@@ -248,6 +293,12 @@
                                             <text>@serverName</text>
                                         }
                                     </dd>
+
+                                    @if (databaseType != "custom")
+                                    {
+                                        <dt class="col-sm-4">Database Name</dt>
+                                        <dd class="col-sm-8">@(string.IsNullOrWhiteSpace(databaseName) ? "SCIMServer" : databaseName)</dd>
+                                    }
 
                                     <dt class="col-sm-4">Admin Username</dt>
                                     <dd class="col-sm-8">@config.AdminUsername</dd>
@@ -332,21 +383,25 @@
     private List<string> errors = new();
 
     // Database configuration
-    private string databaseType = "localdb";
-    private string serverName = ".\\SQLEXPRESS";
-    private string authType = "windows";
+    private string databaseType = "sqlserver";
+    private string serverName = "localhost";
+    private string databaseName = "SCIMServer";
+    private string authType = "sql";
     private string dbUsername = "sa";
     private string dbPassword = "";
-    private bool trustServerCertificate = false;
-    private bool encryptConnection = true;
+    private bool trustServerCertificate = true;
+    private bool encryptConnection = false;
 
     // Password confirmation
     private string confirmPassword = "";
 
     // Connection test
     private bool testingConnection = false;
-    private string connectionTestResult = "";
-    private bool connectionTestSuccess = false;
+    private ConnectionTestResult? connectionTest;
+    private bool autoCreateDatabase = true;
+    private bool creatingDatabase = false;
+    private string createDatabaseMessage = "";
+    private bool createDatabaseSuccess = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -374,6 +429,22 @@
                 errors.Add("Please configure the database connection");
                 return;
             }
+            if (connectionTest == null)
+            {
+                errors.Add("Please test the connection before continuing.");
+                return;
+            }
+            if (!connectionTest.ServerReachable)
+            {
+                errors.Add("Database server is not reachable. Fix the connection and re-test.");
+                return;
+            }
+            if (!connectionTest.DatabaseExists && !autoCreateDatabase)
+            {
+                errors.Add($"Database '{connectionTest.DatabaseName}' does not exist. Either create it now, or check 'Create on setup completion'.");
+                return;
+            }
+            config.AutoCreateDatabase = autoCreateDatabase;
         }
         else if (currentStep == 2)
         {
@@ -410,31 +481,33 @@
 
     private void UpdateConnectionString()
     {
+        var db = string.IsNullOrWhiteSpace(databaseName) ? "SCIMServer" : databaseName.Trim();
+
         if (databaseType == "localdb")
         {
-            config.ConnectionString = "Server=(localdb)\\mssqllocaldb;Database=SCIMServer;Trusted_Connection=True;";
+            config.ConnectionString = $"Server=(localdb)\\mssqllocaldb;Database={db};Trusted_Connection=True;";
         }
         else if (databaseType == "sqlexpress" || databaseType == "sqlserver")
         {
-            var server = string.IsNullOrWhiteSpace(serverName) 
-                ? (databaseType == "sqlexpress" ? ".\\SQLEXPRESS" : "localhost") 
+            var server = string.IsNullOrWhiteSpace(serverName)
+                ? (databaseType == "sqlexpress" ? ".\\SQLEXPRESS" : "localhost")
                 : serverName;
 
             if (authType == "windows")
             {
-                config.ConnectionString = $"Server={server};Database=SCIMServer;Trusted_Connection=True;";
+                config.ConnectionString = $"Server={server};Database={db};Trusted_Connection=True;";
             }
             else
             {
-                config.ConnectionString = $"Server={server};Database=SCIMServer;User Id={dbUsername};Password={dbPassword};";
+                config.ConnectionString = $"Server={server};Database={db};User Id={dbUsername};Password={dbPassword};";
             }
-            
+
             // Add encryption settings
             if (!encryptConnection)
             {
                 config.ConnectionString += "Encrypt=False;";
             }
-            
+
             // Add TrustServerCertificate if enabled
             if (trustServerCertificate)
             {
@@ -446,43 +519,64 @@
     private async Task TestConnection()
     {
         testingConnection = true;
-        connectionTestResult = "";
-        
+        createDatabaseMessage = "";
         UpdateConnectionString();
 
         try
         {
-            var builder = new SqlConnectionStringBuilder(config.ConnectionString);
-            builder.InitialCatalog = "master";
-            builder.ConnectTimeout = 5;
-            
-            // Apply encryption settings
-            if (!encryptConnection)
-            {
-                builder.Encrypt = false;
-            }
-            
-            // Ensure TrustServerCertificate is set if enabled
-            if (trustServerCertificate)
-            {
-                builder.TrustServerCertificate = true;
-            }
-
-            using var connection = new SqlConnection(builder.ConnectionString);
-            await connection.OpenAsync();
-
-            connectionTestSuccess = true;
-            connectionTestResult = "Connection successful!";
-        }
-        catch (Exception ex)
-        {
-            connectionTestSuccess = false;
-            connectionTestResult = $"Connection failed: {ex.Message}";
+            connectionTest = await SetupService.TestConnectionAsync(config.ConnectionString);
         }
         finally
         {
             testingConnection = false;
         }
+    }
+
+    private async Task CreateDatabaseNow()
+    {
+        if (connectionTest == null) return;
+        creatingDatabase = true;
+        createDatabaseMessage = "";
+        try
+        {
+            var (success, message) = await SetupService.CreateDatabaseAsync(config.ConnectionString);
+            createDatabaseSuccess = success;
+            createDatabaseMessage = message;
+            if (success)
+            {
+                connectionTest = await SetupService.TestConnectionAsync(config.ConnectionString);
+            }
+        }
+        finally
+        {
+            creatingDatabase = false;
+        }
+    }
+
+    private string GetTestAlertClass()
+    {
+        if (connectionTest == null) return "alert-secondary";
+        if (!connectionTest.ServerReachable) return "alert-danger";
+        if (!connectionTest.DatabaseExists) return "alert-warning";
+        return "alert-success";
+    }
+
+    private string GetTestMessage()
+    {
+        if (connectionTest == null) return "";
+        if (!connectionTest.ServerReachable)
+        {
+            return $"Connection failed: {connectionTest.ErrorMessage}";
+        }
+        if (!connectionTest.DatabaseExists)
+        {
+            return $"Connected to server, but database '{connectionTest.DatabaseName}' does not exist.";
+        }
+        if (!connectionTest.SchemaExists)
+        {
+            return $"Connected. Database '{connectionTest.DatabaseName}' exists but is empty — schema will be created on setup completion.";
+        }
+        return $"Connection successful. Database '{connectionTest.DatabaseName}' is ready (existing schema detected).";
     }
 
     private void GenerateSecretKey()

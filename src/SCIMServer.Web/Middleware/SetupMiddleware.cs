@@ -28,11 +28,13 @@ namespace SCIMServer.Web.Middleware
         {
             // Skip setup check for static files and framework files
             var path = context.Request.Path.Value?.ToLower() ?? "";
-            if (path.StartsWith("/_") || 
-                path.StartsWith("/css") || 
-                path.StartsWith("/js") || 
+            if (path.StartsWith("/_") ||
+                path.StartsWith("/css") ||
+                path.StartsWith("/js") ||
                 path.StartsWith("/lib") ||
-                path.StartsWith("/setup"))
+                path.StartsWith("/setup") ||
+                path.StartsWith("/login") ||
+                path.StartsWith("/logout"))
             {
                 await _next(context);
                 return;

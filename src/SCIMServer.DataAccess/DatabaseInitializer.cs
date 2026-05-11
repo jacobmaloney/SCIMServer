@@ -181,6 +181,7 @@ CREATE TABLE [dbo].[Users] (
     [Division] NVARCHAR(255) NULL,
     [Department] NVARCHAR(255) NULL,
     [ManagerId] UNIQUEIDENTIFIER NULL,
+    [IsAdmin] BIT NOT NULL DEFAULT 0,
     CONSTRAINT [PK_Users] PRIMARY KEY CLUSTERED ([Id]),
     CONSTRAINT [FK_Users_Manager] FOREIGN KEY ([ManagerId]) REFERENCES [Users]([Id]),
     CONSTRAINT [UQ_Users_UserName] UNIQUE ([UserName])
@@ -190,6 +191,7 @@ CREATE INDEX [IX_Users_UserName] ON [Users]([UserName]);
 CREATE INDEX [IX_Users_ExternalId] ON [Users]([ExternalId]);
 CREATE INDEX [IX_Users_Active] ON [Users]([Active]);
 CREATE INDEX [IX_Users_ManagerId] ON [Users]([ManagerId]);
+CREATE INDEX [IX_Users_IsAdmin] ON [Users]([IsAdmin]) WHERE [IsAdmin] = 1;
 
 -- User Emails Table
 CREATE TABLE [dbo].[UserEmails] (

@@ -56,6 +56,10 @@
                 <i class="oi oi-cog"></i>
                 <span>Configuration</span>
             </NavLink>
+            <NavLink class="nav-item" href="database-settings">
+                <i class="oi oi-hard-drive"></i>
+                <span>Database</span>
+            </NavLink>
             <NavLink class="nav-item" href="audit-log">
                 <i class="oi oi-list-rich"></i>
                 <span>Audit Log</span>
@@ -68,7 +72,19 @@
     </nav>
     
     <div class="nav-footer">
-        <div class="nav-footer-info">
+        <AuthorizeView>
+            <Authorized>
+                <div class="mb-2">
+                    <small class="text-muted d-block">Signed in as</small>
+                    <strong>@context.User.Identity?.Name</strong>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary w-100" href="/logout">Sign out</a>
+            </Authorized>
+            <NotAuthorized>
+                <a class="btn btn-sm btn-outline-primary w-100" href="/login">Sign in</a>
+            </NotAuthorized>
+        </AuthorizeView>
+        <div class="nav-footer-info mt-2">
             <small>SCIM 2.0 Compliant</small>
             <small>Version 1.0.0</small>
         </div>

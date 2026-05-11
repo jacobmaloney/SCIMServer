@@ -239,6 +239,28 @@ COMMIT TRANSACTION;"
                 }
             }
 
+            // Migration 5: Add IsAdmin to Users
+            if (analysis.ExistingTables.Contains("Users"))
+            {
+                var columns = analysis.TableColumns.GetValueOrDefault("Users", new HashSet<string>());
+
+                if (!columns.Contains("IsAdmin"))
+                {
+                    migrations.Add(new SchemaMigration
+                    {
+                        Version = 7,
+                        Name = "Add IsAdmin to Users",
+                        Description = "Add IsAdmin column for portal administrators",
+                        SqlScript = @"
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Users') AND name = 'IsAdmin')
+BEGIN
+    ALTER TABLE [dbo].[Users] ADD [IsAdmin] BIT NOT NULL CONSTRAINT [DF_Users_IsAdmin] DEFAULT 0;
+    CREATE INDEX [IX_Users_IsAdmin] ON [Users]([IsAdmin]) WHERE [IsAdmin] = 1;
+END"
+                    });
+                }
+            }
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }
