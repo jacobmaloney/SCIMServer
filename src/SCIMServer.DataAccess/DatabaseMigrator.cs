@@ -359,6 +359,32 @@ END
 "
             });
 
+            // Migration 7 (v9): SqlAccounts tracking table for the /sql/v1/ emulator.
+            // Holds metadata only — actual SQL login state lives in sys.sql_logins on the
+            // configured target instance (see SystemConfiguration key SqlEmulator.ConnectionString).
+            migrations.Add(new SchemaMigration
+            {
+                Version = 9,
+                Name = "SqlAccounts tracking table",
+                Description = "Adds the SqlAccounts table backing the /sql/v1/ emulator endpoint.",
+                SqlScript = @"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'SqlAccounts')
+BEGIN
+    CREATE TABLE [dbo].[SqlAccounts] (
+        [Id]       UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        [TenantId] UNIQUEIDENTIFIER NOT NULL CONSTRAINT [DF_SqlAccounts_TenantId] DEFAULT '00000000-0000-0000-0000-000000000001',
+        [Username] NVARCHAR(128)    NOT NULL,
+        [Disabled] BIT              NOT NULL CONSTRAINT [DF_SqlAccounts_Disabled] DEFAULT 0,
+        [Created]  DATETIME2        NOT NULL CONSTRAINT [DF_SqlAccounts_Created] DEFAULT GETUTCDATE(),
+        CONSTRAINT [PK_SqlAccounts] PRIMARY KEY CLUSTERED ([Id]),
+        CONSTRAINT [FK_SqlAccounts_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [Tenants]([Id]),
+        CONSTRAINT [UQ_SqlAccounts_TenantUsername] UNIQUE ([TenantId], [Username])
+    );
+    CREATE INDEX [IX_SqlAccounts_TenantId] ON [SqlAccounts]([TenantId]);
+END
+"
+            });
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }
