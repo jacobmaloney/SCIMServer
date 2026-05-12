@@ -4,6 +4,7 @@
 @using SCIMServer.DataAccess.Repositories
 @using SCIMServer.Web.Services
 @inject TenantRepository TenantRepo
+@inject ApiTokenService Tokens
 @inject DemoSeedService DemoSeed
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -120,6 +121,9 @@
                             </div>
                         </div>
                         <div class="card-footer bg-transparent">
+                            <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => ShowEndpoints(s)">
+                                <i class="oi oi-link-intact"></i> Endpoints
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditSystem(s.TenantId)">
                                 <i class="oi oi-pencil"></i> Edit
                             </button>
@@ -195,6 +199,136 @@
     <div class="modal-backdrop fade show"></div>
 }
 
+<!-- Endpoints modal -->
+@if (endpointsFor != null)
+{
+    <div class="modal show d-block" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        Endpoints — @endpointsFor.Name
+                        @if (endpointsFor.SystemType == "Real")
+                        {
+                            <span class="badge bg-success ms-2">REAL</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning text-dark ms-2">EMULATOR</span>
+                        }
+                    </h5>
+                    <button class="btn-close" @onclick="CloseEndpoints"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">
+                        POST here from your ARS PowerShell workflows or any external app. The bearer token decides
+                        which Connected System the request lands in — every token below is scoped to
+                        <code>@endpointsFor.Slug</code>.
+                    </p>
+
+                    <h6 class="mt-3">URLs</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead class="table-light">
+                                <tr><th style="width: 24%">Surface</th><th>URL</th><th style="width: 14%">Method</th><th style="width: 18%">Required scope</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>SCIM 2.0</strong><br /><small class="text-muted">Users</small></td>
+                                    <td><code>@baseUrl/scim/v2/Users</code></td>
+                                    <td>POST / GET / PATCH</td>
+                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>SCIM 2.0</strong><br /><small class="text-muted">Groups</small></td>
+                                    <td><code>@baseUrl/scim/v2/Groups</code></td>
+                                    <td>POST / GET / PATCH</td>
+                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Generic REST</strong><br /><small class="text-muted">Users</small></td>
+                                    <td><code>@baseUrl/api/v1/users</code></td>
+                                    <td>POST / GET / PATCH / DELETE</td>
+                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Generic REST</strong><br /><small class="text-muted">Groups</small></td>
+                                    <td><code>@baseUrl/api/v1/groups</code></td>
+                                    <td>POST / GET / DELETE</td>
+                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>SQL emulator</strong><br /><small class="text-muted">Local SQL logins</small></td>
+                                    <td><code>@baseUrl/sql/v1/accounts</code></td>
+                                    <td>POST / GET / PATCH / DELETE</td>
+                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h6 class="mt-4">Tokens scoped to this Connected System</h6>
+                    @if (endpointTokens.Count == 0)
+                    {
+                        <div class="alert alert-warning py-2">
+                            No tokens are scoped to this system yet. Go to <a href="/tokens">API Tokens</a> to create one
+                            (choose <strong>@endpointsFor.Name</strong> from the Connected System dropdown).
+                        </div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr><th>Name</th><th>Scope</th><th>Created</th><th>Bearer header</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var t in endpointTokens)
+                                {
+                                    var demoRaw = LookupDemoToken(t.Name);
+                                    <tr>
+                                        <td>
+                                            <strong>@t.Name</strong>
+                                            @if (!string.IsNullOrEmpty(t.Description))
+                                            {
+                                                <br /><small class="text-muted">@t.Description</small>
+                                            }
+                                        </td>
+                                        <td><span class="badge bg-info text-dark">@(string.IsNullOrEmpty(t.Scope) ? "Tenant" : t.Scope)</span></td>
+                                        <td><small>@t.CreatedAt.ToString("yyyy-MM-dd")</small></td>
+                                        <td>
+                                            @if (demoRaw != null)
+                                            {
+                                                <code>Bearer scim_@demoRaw</code>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted small">Raw token shown only at creation time — see <a href="/tokens">API Tokens</a> to mint a new one.</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+
+                    <h6 class="mt-4">Example: create a user via SCIM</h6>
+                    <pre class="bg-light p-3 mb-2 small" style="white-space: pre-wrap;"><code>@ScimCurlExample()</code></pre>
+
+                    <h6 class="mt-4">Example: create a user via Generic REST</h6>
+                    <pre class="bg-light p-3 mb-2 small" style="white-space: pre-wrap;"><code>@GenericCurlExample()</code></pre>
+
+                    <h6 class="mt-4">Example: PowerShell <code>Invoke-RestMethod</code> from ARS workflow</h6>
+                    <pre class="bg-light p-3 mb-0 small" style="white-space: pre-wrap;"><code>@PowershellExample()</code></pre>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseEndpoints">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
 @code {
     private List<TenantStats> stats = new();
     private bool loading = true;
@@ -205,6 +339,114 @@
     private Tenant form = new();
     private string errorMessage = "";
     private DemoSeedService.SeedResult? lastSeedResult;
+
+    // Endpoints modal state
+    private TenantStats? endpointsFor;
+    private List<SCIMServer.Web.Services.ApiToken> endpointTokens = new();
+    private string baseUrl = "";
+
+    // Demo seed tokens (name → raw value) — only ones whose raw value is documented.
+    // For any other token, raw value is unrecoverable from the hash by design.
+    private static readonly Dictionary<string, string> KnownDemoTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "kodak-entraid-token",  "demo-kodak-2024" },
+        { "internal-app-token",   "demo-internal-2024" },
+        { "admin-token",          "admin-scimserver-2024" },
+        { "ars-proxy-token",      "ars-proxy-2024" }
+    };
+
+    private static string? LookupDemoToken(string name) =>
+        KnownDemoTokens.TryGetValue(name, out var v) ? v : null;
+
+    private async Task ShowEndpoints(TenantStats s)
+    {
+        endpointsFor = s;
+        baseUrl = Navigation.BaseUri.TrimEnd('/');
+        try
+        {
+            var all = await Tokens.GetAllTokensAsync();
+            endpointTokens = all.Where(t => t.TenantId == s.TenantId).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load tokens for endpoints view: {ex.Message}");
+            endpointTokens = new();
+        }
+    }
+
+    private void CloseEndpoints() => endpointsFor = null;
+
+    private string DemoBearer() =>
+        endpointTokens
+            .Select(t => LookupDemoToken(t.Name))
+            .FirstOrDefault(v => v != null) is { } raw
+                ? $"scim_{raw}"
+                : "scim_<your-token>";
+
+    private string ExampleDomain()
+    {
+        var d = endpointsFor?.Domain;
+        return string.IsNullOrWhiteSpace(d) ? "example.com" : d;
+    }
+
+    private string ScimCurlExample()
+    {
+        var bearer = DemoBearer();
+        var domain = ExampleDomain();
+        var url = baseUrl + "/scim/v2/Users";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("curl -X POST " + url + " \\");
+        sb.AppendLine("  -H \"Authorization: Bearer " + bearer + "\" \\");
+        sb.AppendLine("  -H \"Content-Type: application/scim+json\" \\");
+        sb.AppendLine("  -d '{");
+        sb.AppendLine("    \"schemas\": [\"urn:ietf:params:scim:schemas:core:2.0:User\"],");
+        sb.AppendLine("    \"userName\": \"jsmith\",");
+        sb.AppendLine("    \"name\": { \"givenName\": \"John\", \"familyName\": \"Smith\" },");
+        sb.AppendLine("    \"emails\": [{ \"value\": \"jsmith@" + domain + "\", \"primary\": true }],");
+        sb.AppendLine("    \"active\": true");
+        sb.Append("  }'");
+        return sb.ToString();
+    }
+
+    private string GenericCurlExample()
+    {
+        var bearer = DemoBearer();
+        var domain = ExampleDomain();
+        var url = baseUrl + "/api/v1/users";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("curl -X POST " + url + " \\");
+        sb.AppendLine("  -H \"Authorization: Bearer " + bearer + "\" \\");
+        sb.AppendLine("  -H \"Content-Type: application/json\" \\");
+        sb.AppendLine("  -d '{");
+        sb.AppendLine("    \"username\": \"jsmith\",");
+        sb.AppendLine("    \"email\": \"jsmith@" + domain + "\",");
+        sb.AppendLine("    \"firstName\": \"John\",");
+        sb.AppendLine("    \"lastName\": \"Smith\",");
+        sb.AppendLine("    \"active\": true");
+        sb.Append("  }'");
+        return sb.ToString();
+    }
+
+    private string PowershellExample()
+    {
+        var bearer = DemoBearer();
+        var domain = ExampleDomain();
+        var url = baseUrl + "/scim/v2/Users";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("$headers = @{");
+        sb.AppendLine("    'Authorization' = 'Bearer " + bearer + "'");
+        sb.AppendLine("    'Content-Type'  = 'application/scim+json'");
+        sb.AppendLine("}");
+        sb.AppendLine("$body = @{");
+        sb.AppendLine("    schemas  = @('urn:ietf:params:scim:schemas:core:2.0:User')");
+        sb.AppendLine("    userName = 'jsmith'");
+        sb.AppendLine("    name     = @{ givenName = 'John'; familyName = 'Smith' }");
+        sb.AppendLine("    emails   = @(@{ value = 'jsmith@" + domain + "'; primary = $true })");
+        sb.AppendLine("    active   = $true");
+        sb.AppendLine("} | ConvertTo-Json -Depth 5");
+        sb.Append("Invoke-RestMethod -Method Post -Uri '" + url + "' -Headers $headers -Body $body");
+        return sb.ToString();
+    }
 
     private async Task SeedDemo()
     {
