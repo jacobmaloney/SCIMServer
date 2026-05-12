@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using SCIMServer.Web.Services;
+using SCIMServer.Core.Models;
 
 namespace SCIMServer.Web.Middleware;
 
@@ -40,14 +41,23 @@ public class ApiTokenAuthMiddleware
                 return;
             }
 
+            // Surface tenant identity for downstream services (TenantContext + repos).
+            context.Items[TenantContext.TenantIdItemKey] = apiToken.TenantId;
+            context.Items[TenantContext.ScopeItemKey] = apiToken.Scope ?? "Tenant";
+
             var claims = new List<Claim>
             {
                 new(ClaimTypes.NameIdentifier, apiToken.Id.ToString()),
                 new(ClaimTypes.Name, apiToken.Name),
                 new("TokenType", "ApiToken"),
+                new("TokenScope", apiToken.Scope ?? "Tenant"),
                 new("scope", "scim:read"),
                 new("scope", "scim:write")
             };
+            if (apiToken.TenantId is { } tid)
+            {
+                claims.Add(new Claim("TenantId", tid.ToString()));
+            }
 
             var identity = new ClaimsIdentity(claims, "ApiToken");
             context.User = new ClaimsPrincipal(identity);

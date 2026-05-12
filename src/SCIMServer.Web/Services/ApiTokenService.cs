@@ -24,17 +24,31 @@ namespace SCIMServer.Web.Services
         }
 
         /// <summary>
-        /// Creates a new API token
+        /// Creates a new API token with a random value. Returns the raw token (with scim_ prefix).
         /// </summary>
-        public async Task<string> CreateTokenAsync(string name, string? description, DateTime? expiresAt)
+        public Task<string> CreateTokenAsync(string name, string? description, DateTime? expiresAt) =>
+            CreateTokenAsync(name, description, expiresAt, tenantId: null, scope: "Tenant", fixedRawValue: null);
+
+        /// <summary>
+        /// Creates a new API token. If <paramref name="fixedRawValue"/> is provided, it is used
+        /// as the raw token value (allowing deterministic demo tokens such as "demo-kodak-2024").
+        /// The full bearer header is always <c>scim_{value}</c>.
+        /// </summary>
+        public async Task<string> CreateTokenAsync(
+            string name,
+            string? description,
+            DateTime? expiresAt,
+            Guid? tenantId,
+            string scope,
+            string? fixedRawValue)
         {
             var tokenId = Guid.NewGuid();
-            var tokenValue = GenerateSecureToken();
+            var tokenValue = string.IsNullOrEmpty(fixedRawValue) ? GenerateSecureToken() : fixedRawValue;
             var hashedToken = HashToken(tokenValue);
 
-            var sql = @"
-                INSERT INTO ApiTokens (Id, Name, Description, TokenHash, CreatedAt, ExpiresAt, IsActive)
-                VALUES (@Id, @Name, @Description, @TokenHash, @CreatedAt, @ExpiresAt, @IsActive);";
+            const string sql = @"
+                INSERT INTO ApiTokens (Id, Name, Description, TokenHash, CreatedAt, ExpiresAt, IsActive, TenantId, Scope)
+                VALUES (@Id, @Name, @Description, @TokenHash, @CreatedAt, @ExpiresAt, @IsActive, @TenantId, @Scope);";
 
             using var connection = new SqlConnection(_databaseConfig.ConnectionString);
             await connection.ExecuteAsync(sql, new
@@ -45,11 +59,30 @@ namespace SCIMServer.Web.Services
                 TokenHash = hashedToken,
                 CreatedAt = DateTime.UtcNow,
                 ExpiresAt = expiresAt,
-                IsActive = true
+                IsActive = true,
+                TenantId = tenantId,
+                Scope = string.IsNullOrEmpty(scope) ? "Tenant" : scope
             });
 
-            // Return the actual token (only shown once)
             return $"scim_{tokenValue}";
+        }
+
+        /// <summary>
+        /// Idempotent: creates the token only if no row exists with the same hash.
+        /// Returns the raw token. Used by demo seed for fixed-value tokens.
+        /// </summary>
+        public async Task<string> EnsureFixedTokenAsync(string name, string rawValue, Guid? tenantId, string scope, string? description = null)
+        {
+            var hash = HashToken(rawValue);
+            using var connection = new SqlConnection(_databaseConfig.ConnectionString);
+            var exists = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM ApiTokens WHERE TokenHash = @TokenHash",
+                new { TokenHash = hash });
+            if (exists == 0)
+            {
+                await CreateTokenAsync(name, description, expiresAt: null, tenantId, scope, fixedRawValue: rawValue);
+            }
+            return $"scim_{rawValue}";
         }
 
         /// <summary>
@@ -162,5 +195,15 @@ namespace SCIMServer.Web.Services
         public DateTime? LastUsedAt { get; set; }
         public DateTime? ExpiresAt { get; set; }
         public bool IsActive { get; set; }
+
+        /// <summary>
+        /// Connected System scope. NULL = Admin / all systems (only valid when Scope = "Admin" or "ArsProxy").
+        /// </summary>
+        public Guid? TenantId { get; set; }
+
+        /// <summary>
+        /// Authorization scope: "Admin" | "Tenant" | "ArsProxy". Default = "Tenant".
+        /// </summary>
+        public string Scope { get; set; } = "Tenant";
     }
 }

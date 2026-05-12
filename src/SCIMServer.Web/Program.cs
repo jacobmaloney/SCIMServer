@@ -98,6 +98,9 @@ builder.Services.AddAuthorization();
 
 // Register services
 builder.Services.AddTransient<DatabaseInitializer>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ITenantContext, TenantContext>();
+builder.Services.AddScoped<TenantRepository>();
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<GroupRepository>();
 builder.Services.AddScoped<TokenService>();
