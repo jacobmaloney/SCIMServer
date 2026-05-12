@@ -261,6 +261,104 @@ END"
                 }
             }
 
+            // Migration 6 (v8): Multi-tenant — Connected Systems
+            // Adds the Tenants table (UI label = "Connected Systems"), plus TenantId
+            // foreign keys on Users, Groups, and ApiTokens, plus a Scope column on
+            // ApiTokens. Seeds a default tenant so existing rows survive the NOT NULL
+            // constraint. Idempotent at every step.
+            migrations.Add(new SchemaMigration
+            {
+                Version = 8,
+                Name = "Multi-tenant (Connected Systems) baseline",
+                Description = "Add Tenants table + TenantId on Users/Groups/ApiTokens + Scope on ApiTokens",
+                SqlScript = @"
+-- 1. Tenants table
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Tenants')
+BEGIN
+    CREATE TABLE [dbo].[Tenants] (
+        [Id]           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        [Name]         NVARCHAR(200)    NOT NULL,
+        [Slug]         NVARCHAR(100)    NOT NULL,
+        [Description]  NVARCHAR(500)    NULL,
+        [SystemType]   NVARCHAR(20)     NOT NULL CONSTRAINT [DF_Tenants_SystemType] DEFAULT 'Emulator',
+        [Domain]       NVARCHAR(300)    NULL,
+        [IsActive]     BIT              NOT NULL CONSTRAINT [DF_Tenants_IsActive] DEFAULT 1,
+        [Created]      DATETIME2        NOT NULL CONSTRAINT [DF_Tenants_Created] DEFAULT GETUTCDATE(),
+        [LastModified] DATETIME2        NOT NULL CONSTRAINT [DF_Tenants_LastModified] DEFAULT GETUTCDATE(),
+        CONSTRAINT [PK_Tenants] PRIMARY KEY CLUSTERED ([Id]),
+        CONSTRAINT [UQ_Tenants_Slug] UNIQUE ([Slug])
+    );
+    CREATE INDEX [IX_Tenants_IsActive] ON [Tenants]([IsActive]);
+END
+
+-- 2. Seed default tenant so existing Users/Groups/ApiTokens have a parent.
+-- Fixed GUID so cross-DB references in code can be deterministic.
+IF NOT EXISTS (SELECT 1 FROM [dbo].[Tenants] WHERE [Id] = '00000000-0000-0000-0000-000000000001')
+BEGIN
+    INSERT INTO [dbo].[Tenants] ([Id], [Name], [Slug], [Description], [SystemType], [IsActive])
+    VALUES (
+        '00000000-0000-0000-0000-000000000001',
+        'Default',
+        'default',
+        'Default Connected System for pre-multi-tenant data',
+        'Emulator',
+        1
+    );
+END
+
+-- 3. Users.TenantId
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Users') AND name = 'TenantId')
+BEGIN
+    ALTER TABLE [dbo].[Users]
+        ADD [TenantId] UNIQUEIDENTIFIER NOT NULL
+        CONSTRAINT [DF_Users_TenantId] DEFAULT '00000000-0000-0000-0000-000000000001';
+END
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_Users_Tenants')
+BEGIN
+    ALTER TABLE [dbo].[Users] WITH CHECK
+        ADD CONSTRAINT [FK_Users_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [Tenants]([Id]);
+END
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_TenantId' AND object_id = OBJECT_ID('dbo.Users'))
+    CREATE INDEX [IX_Users_TenantId] ON [Users]([TenantId]);
+
+-- 4. Groups.TenantId
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Groups') AND name = 'TenantId')
+BEGIN
+    ALTER TABLE [dbo].[Groups]
+        ADD [TenantId] UNIQUEIDENTIFIER NOT NULL
+        CONSTRAINT [DF_Groups_TenantId] DEFAULT '00000000-0000-0000-0000-000000000001';
+END
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_Groups_Tenants')
+BEGIN
+    ALTER TABLE [dbo].[Groups] WITH CHECK
+        ADD CONSTRAINT [FK_Groups_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [Tenants]([Id]);
+END
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Groups_TenantId' AND object_id = OBJECT_ID('dbo.Groups'))
+    CREATE INDEX [IX_Groups_TenantId] ON [Groups]([TenantId]);
+
+-- 5. ApiTokens.TenantId (nullable — NULL = admin/all-tenants)
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ApiTokens') AND name = 'TenantId')
+BEGIN
+    ALTER TABLE [dbo].[ApiTokens] ADD [TenantId] UNIQUEIDENTIFIER NULL;
+END
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_ApiTokens_Tenants')
+BEGIN
+    ALTER TABLE [dbo].[ApiTokens] WITH CHECK
+        ADD CONSTRAINT [FK_ApiTokens_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [Tenants]([Id]);
+END
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ApiTokens_TenantId' AND object_id = OBJECT_ID('dbo.ApiTokens'))
+    CREATE INDEX [IX_ApiTokens_TenantId] ON [ApiTokens]([TenantId]);
+
+-- 6. ApiTokens.Scope ('Admin' | 'Tenant' | 'ArsProxy'; default 'Tenant')
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ApiTokens') AND name = 'Scope')
+BEGIN
+    ALTER TABLE [dbo].[ApiTokens]
+        ADD [Scope] NVARCHAR(20) NOT NULL
+        CONSTRAINT [DF_ApiTokens_Scope] DEFAULT 'Tenant';
+END
+"
+            });
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }
