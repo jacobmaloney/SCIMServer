@@ -1,6 +1,7 @@
 @page "/"
 @attribute [Authorize]
 @inject SCIMServer.DataAccess.Repositories.UserRepository UserRepository
+@inject SCIMServer.DataAccess.Repositories.TenantRepository TenantRepo
 
 <PageTitle>SCIM Server - Enterprise Identity Management</PageTitle>
 
@@ -140,6 +141,52 @@
     </div>
 </div>
 
+<div class="container-fluid mt-4">
+    <div class="section-header">
+        <h2>Connected Systems</h2>
+        <p>External identity targets this server talks to. <a href="/connected-systems">Manage →</a></p>
+    </div>
+    @if (systemStats.Count == 0)
+    {
+        <div class="alert alert-info">
+            No connected systems configured yet. <a href="/connected-systems">Connect one →</a>
+        </div>
+    }
+    else
+    {
+        <div class="row">
+            @foreach (var s in systemStats)
+            {
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h5 class="card-title mb-1">@s.Name</h5>
+                                    <small class="text-muted"><code>@s.Slug</code></small>
+                                </div>
+                                @if (s.SystemType == "Real")
+                                {
+                                    <span class="badge bg-success">REAL</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning text-dark">EMULATOR</span>
+                                }
+                            </div>
+                            <div class="row text-center mt-3">
+                                <div class="col"><div class="fw-bold">@s.UserCount</div><small class="text-muted">Users</small></div>
+                                <div class="col"><div class="fw-bold">@s.GroupCount</div><small class="text-muted">Groups</small></div>
+                                <div class="col"><div class="fw-bold">@s.TokenCount</div><small class="text-muted">Tokens</small></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
 <div class="api-section">
     <div class="container-fluid">
         <div class="section-header">
@@ -185,7 +232,8 @@
     private int userCount = 0;
     private int activeUserCount = 0;
     private int groupCount = 0;
-    private int tokenCount = 3;
+    private int tokenCount = 0;
+    private List<SCIMServer.DataAccess.Repositories.TenantStats> systemStats = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -193,15 +241,22 @@
         {
             var (users, count) = await UserRepository.GetAllAsync(new SCIMServer.Core.Models.ScimQueryOptions { Count = 1 });
             userCount = count;
-            
-            // Count active users
             activeUserCount = users.Count(u => u.Active);
         }
         catch
         {
-            // If database is not initialized, show zeros
             userCount = 0;
             activeUserCount = 0;
+        }
+        try
+        {
+            systemStats = await TenantRepo.GetStatsAsync();
+            groupCount = systemStats.Sum(s => s.GroupCount);
+            tokenCount = systemStats.Sum(s => s.TokenCount);
+        }
+        catch
+        {
+            systemStats = new();
         }
     }
 }

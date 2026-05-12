@@ -1,0 +1,277 @@
+@page "/connected-systems"
+@attribute [Authorize]
+@using SCIMServer.Core.Models
+@using SCIMServer.DataAccess.Repositories
+@inject TenantRepository TenantRepo
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Connected Systems - SCIM Server</PageTitle>
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1>Connected Systems</h1>
+            <p class="text-muted">External identity targets this SCIM server connects to.</p>
+        </div>
+        <button class="btn btn-primary" @onclick="ShowCreateModal">
+            <i class="oi oi-plus"></i> + Connect a system
+        </button>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else if (!stats.Any())
+    {
+        <div class="alert alert-info">
+            <h4 class="alert-heading">No connected systems yet</h4>
+            <p>Connect one to get started.</p>
+            <button class="btn btn-primary btn-sm" @onclick="ShowCreateModal">
+                <i class="oi oi-plus"></i> Connect a system
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="row">
+            @foreach (var s in stats)
+            {
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <h5 class="card-title mb-0">@s.Name</h5>
+                                @if (s.SystemType == "Real")
+                                {
+                                    <span class="badge bg-success">REAL</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning text-dark">EMULATOR</span>
+                                }
+                            </div>
+                            <p class="text-muted small mb-2">
+                                <code>@s.Slug</code>
+                                @if (!string.IsNullOrWhiteSpace(s.Domain))
+                                {
+                                    <span class="ms-2">@s.Domain</span>
+                                }
+                            </p>
+                            @if (!s.IsActive)
+                            {
+                                <span class="badge bg-secondary mb-2">Inactive</span>
+                            }
+                            <div class="row text-center mt-3">
+                                <div class="col">
+                                    <div class="fw-bold">@s.UserCount</div>
+                                    <small class="text-muted">Users</small>
+                                </div>
+                                <div class="col">
+                                    <div class="fw-bold">@s.GroupCount</div>
+                                    <small class="text-muted">Groups</small>
+                                </div>
+                                <div class="col">
+                                    <div class="fw-bold">@s.TokenCount</div>
+                                    <small class="text-muted">Tokens</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditSystem(s.TenantId)">
+                                <i class="oi oi-pencil"></i> Edit
+                            </button>
+                            @if (s.TenantId != TenantRepository.DefaultTenantId)
+                            {
+                                <button class="btn btn-sm btn-outline-danger float-end" @onclick="() => DeactivateSystem(s)">
+                                    <i class="oi oi-ban"></i> Deactivate
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<!-- Create / Edit modal -->
+<div class="modal @(showModal ? "show d-block" : "")" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">@(editingId.HasValue ? "Edit Connected System" : "Connect a System")</h5>
+                <button type="button" class="btn-close" @onclick="CloseModal"></button>
+            </div>
+            <div class="modal-body">
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger py-2">@errorMessage</div>
+                }
+                <div class="mb-3">
+                    <label class="form-label">Name *</label>
+                    <input class="form-control" @bind="form.Name" @bind:event="oninput" @bind:after="OnNameChanged" placeholder="e.g. Kodak — Entra ID Staging" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Slug *</label>
+                    <input class="form-control" @bind="form.Slug" placeholder="kodak-entraid" />
+                    <small class="form-text text-muted">URL-safe identifier. Auto-derived from the name; edit if needed. Unique across all systems.</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Domain</label>
+                    <input class="form-control" @bind="form.Domain" placeholder="e.g. kodak.onmicrosoft.com (optional)" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">System Type *</label>
+                    <select class="form-select" @bind="form.SystemType">
+                        <option value="Emulator">Emulator (test/demo target)</option>
+                        <option value="Real">Real (production target)</option>
+                    </select>
+                    <small class="form-text text-muted">Emulator systems show an amber badge. Real systems are green.</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control" rows="3" @bind="form.Description"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="CloseModal">Cancel</button>
+                <button class="btn btn-primary" @onclick="Save" disabled="@saving">
+                    @if (saving)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    }
+                    @(editingId.HasValue ? "Save changes" : "Connect")
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showModal)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private List<TenantStats> stats = new();
+    private bool loading = true;
+    private bool showModal;
+    private bool saving;
+    private Guid? editingId;
+    private Tenant form = new();
+    private string errorMessage = "";
+
+    protected override Task OnInitializedAsync() => Task.CompletedTask;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Load();
+            StateHasChanged();
+        }
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { stats = await TenantRepo.GetStatsAsync(); }
+        catch (Exception ex) { Console.WriteLine($"Failed to load connected systems: {ex.Message}"); }
+        finally { loading = false; }
+    }
+
+    private void ShowCreateModal()
+    {
+        editingId = null;
+        form = new Tenant { SystemType = "Emulator", IsActive = true };
+        errorMessage = "";
+        showModal = true;
+    }
+
+    private async Task EditSystem(Guid id)
+    {
+        var existing = await TenantRepo.GetByIdAsync(id);
+        if (existing == null) return;
+        editingId = id;
+        form = existing;
+        errorMessage = "";
+        showModal = true;
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        errorMessage = "";
+    }
+
+    private void OnNameChanged()
+    {
+        // Auto-derive slug when creating a new tenant and the slug field hasn't been hand-edited yet.
+        if (editingId.HasValue) return;
+        if (string.IsNullOrWhiteSpace(form.Name)) return;
+        form.Slug = Slugify(form.Name);
+    }
+
+    private static string Slugify(string s)
+    {
+        var lower = s.ToLowerInvariant();
+        var chars = lower.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
+        var collapsed = new string(chars);
+        while (collapsed.Contains("--")) collapsed = collapsed.Replace("--", "-");
+        return collapsed.Trim('-');
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name) || string.IsNullOrWhiteSpace(form.Slug))
+        {
+            errorMessage = "Name and Slug are required.";
+            return;
+        }
+        saving = true;
+        errorMessage = "";
+        try
+        {
+            if (editingId.HasValue)
+            {
+                form.Id = editingId.Value;
+                await TenantRepo.UpdateAsync(form);
+            }
+            else
+            {
+                var clash = await TenantRepo.GetBySlugAsync(form.Slug);
+                if (clash != null)
+                {
+                    errorMessage = $"A connected system with slug '{form.Slug}' already exists.";
+                    return;
+                }
+                await TenantRepo.CreateAsync(form);
+            }
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DeactivateSystem(TenantStats s)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            $"Deactivate '{s.Name}'? Users and groups in this system stay in the database but it will be hidden from active lists.");
+        if (!confirmed) return;
+        await TenantRepo.DeactivateAsync(s.TenantId);
+        await Load();
+    }
+}

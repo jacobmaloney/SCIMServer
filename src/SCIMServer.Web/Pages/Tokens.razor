@@ -2,7 +2,10 @@
 @attribute [Authorize]
 @using SCIMServer.Web.Authentication
 @using SCIMServer.Web.Services
+@using SCIMServer.Core.Models
+@using SCIMServer.DataAccess.Repositories
 @inject ApiTokenService ApiTokenService
+@inject TenantRepository TenantRepo
 @inject NavigationManager Navigation
 
 <PageTitle>API Tokens - SCIM Server</PageTitle>
@@ -65,7 +68,8 @@
                         <thead>
                             <tr>
                                 <th>Name</th>
-                                <th>Description</th>
+                                <th>Connected System</th>
+                                <th>Scope</th>
                                 <th>Created</th>
                                 <th>Last Used</th>
                                 <th>Expires</th>
@@ -79,9 +83,26 @@
                                 <tr>
                                     <td>
                                         <strong>@token.Name</strong>
+                                        @if (!string.IsNullOrWhiteSpace(token.Description))
+                                        {
+                                            <div><small class="text-muted">@token.Description</small></div>
+                                        }
                                     </td>
                                     <td>
-                                        <small class="text-muted">@(token.Description ?? "No description")</small>
+                                        @{
+                                            var name = TenantNameFor(token.TenantId);
+                                        }
+                                        @if (token.TenantId == null)
+                                        {
+                                            <span class="badge bg-dark">Admin — all systems</span>
+                                        }
+                                        else
+                                        {
+                                            <span>@name</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-info text-dark">@(string.IsNullOrEmpty(token.Scope) ? "Tenant" : token.Scope)</span>
                                     </td>
                                     <td>
                                         <small>@token.CreatedAt.ToString("MMM dd, yyyy")</small>
@@ -164,8 +185,21 @@
                     </div>
 
                     <div class="mb-3">
+                        <label class="form-label">Connected System *</label>
+                        <select class="form-select" @bind="newTokenSystemSelection">
+                            <option value="__admin__">Admin — all systems</option>
+                            <option value="__arsproxy__">ARS Proxy (for /ars/v1/ inbound)</option>
+                            @foreach (var sys in tenants)
+                            {
+                                <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
+                            }
+                        </select>
+                        <small class="form-text text-muted">Scopes the token's read/write reach. Admin = full access. ARS Proxy = inbound /ars/v1/ only.</small>
+                    </div>
+
+                    <div class="mb-3">
                         <label class="form-label">Description</label>
-                        <textarea class="form-control" rows="3" @bind="newToken.Description" 
+                        <textarea class="form-control" rows="3" @bind="newToken.Description"
                                   placeholder="What will this token be used for?"></textarea>
                     </div>
 
@@ -220,12 +254,22 @@
 
 @code {
     private List<SCIMServer.Web.Services.ApiToken> tokens = new();
+    private List<Tenant> tenants = new();
     private bool loading = true;
     private bool showCreateModal = false;
     private bool schemaError = false;
     private SCIMServer.Web.Services.ApiToken newToken = new();
     private string generatedToken = "";
     private string expirationOption = "never";
+    // "__admin__" | "__arsproxy__" | a tenant Guid string
+    private string newTokenSystemSelection = "__admin__";
+
+    private string TenantNameFor(Guid? id)
+    {
+        if (id == null) return "Admin";
+        var t = tenants.FirstOrDefault(x => x.Id == id.Value);
+        return t?.Name ?? id.Value.ToString();
+    }
 
     protected override Task OnInitializedAsync()
     {
@@ -237,9 +281,16 @@
     {
         if (firstRender)
         {
+            await LoadTenants();
             await LoadTokens();
             StateHasChanged(); // Force re-render with loaded data
         }
+    }
+
+    private async Task LoadTenants()
+    {
+        try { tenants = await TenantRepo.GetAllAsync(); }
+        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
     }
 
     private async Task LoadTokens()
@@ -272,6 +323,7 @@
         newToken = new SCIMServer.Web.Services.ApiToken();
         generatedToken = "";
         expirationOption = "never";
+        newTokenSystemSelection = "__admin__";
         showCreateModal = true;
     }
 
@@ -297,7 +349,26 @@
 
         try
         {
-            generatedToken = await ApiTokenService.CreateTokenAsync(newToken.Name, newToken.Description, newToken.ExpiresAt);
+            Guid? tenantId;
+            string scope;
+            switch (newTokenSystemSelection)
+            {
+                case "__admin__":
+                    tenantId = null;
+                    scope = nameof(ApiTokenScope.Admin);
+                    break;
+                case "__arsproxy__":
+                    tenantId = null;
+                    scope = nameof(ApiTokenScope.ArsProxy);
+                    break;
+                default:
+                    tenantId = Guid.Parse(newTokenSystemSelection);
+                    scope = nameof(ApiTokenScope.Tenant);
+                    break;
+            }
+            generatedToken = await ApiTokenService.CreateTokenAsync(
+                newToken.Name, newToken.Description, newToken.ExpiresAt,
+                tenantId, scope, fixedRawValue: null);
             await LoadTokens();
         }
         catch (Exception ex)
