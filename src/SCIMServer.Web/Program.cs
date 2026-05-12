@@ -110,6 +110,7 @@ builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<SetupService>();
 builder.Services.AddScoped<SystemConfigurationService>();
 builder.Services.AddScoped<DemoSeedService>();
+builder.Services.AddScoped<ActiveSystemState>();
 builder.Services.AddScoped<LoginService>();
 builder.Services.AddScoped<SCIMServer.Core.Services.UserGenerationService>();
 builder.Services.AddSingleton<ApplicationLogService>();

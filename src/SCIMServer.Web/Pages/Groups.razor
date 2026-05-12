@@ -2,10 +2,13 @@
 @attribute [Authorize]
 @using SCIMServer.Core.Models
 @using SCIMServer.DataAccess.Repositories
+@using SCIMServer.Web.Services
 @inject GroupRepository GroupRepository
 @inject UserRepository UserRepository
 @inject TenantRepository TenantRepo
+@inject ActiveSystemState ActiveSystem
 @inject NavigationManager Navigation
+@implements IDisposable
 
 <PageTitle>Groups - SCIM Server</PageTitle>
 
@@ -370,16 +373,47 @@
     private bool memberChangesPresent = false;
 
     private List<Tenant> tenants = new();
+    // Mirrored from the global ActiveSystemState — see Users.razor for the pattern.
     private string tenantFilterSelection = "";
 
     protected override async Task OnInitializedAsync()
     {
+        ActiveSystem.OnChangeAsync += HandleActiveSystemChangedAsync;
         try { tenants = await TenantRepo.GetAllAsync(); }
         catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
+        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
         await LoadGroups(1);
     }
 
-    private async Task OnTenantFilterChanged() => await LoadGroups(1);
+    public void Dispose()
+    {
+        ActiveSystem.OnChangeAsync -= HandleActiveSystemChangedAsync;
+    }
+
+    private async Task HandleActiveSystemChangedAsync()
+    {
+        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
+        await InvokeAsync(async () =>
+        {
+            await LoadGroups(1);
+            StateHasChanged();
+        });
+    }
+
+    private async Task OnTenantFilterChanged()
+    {
+        var match = Guid.TryParse(tenantFilterSelection, out var id)
+            ? tenants.FirstOrDefault(t => t.Id == id)
+            : null;
+        if (match?.Id == ActiveSystem.ActiveSystem?.Id)
+        {
+            await LoadGroups(1);
+        }
+        else
+        {
+            await ActiveSystem.SetAsync(match);
+        }
+    }
 
     private async Task LoadGroups(int page)
     {
@@ -394,8 +428,7 @@
                 Count = pageSize
             };
 
-            Guid? override_ = null;
-            if (Guid.TryParse(tenantFilterSelection, out var parsed)) override_ = parsed;
+            var override_ = ActiveSystem.ActiveSystem?.Id;
             var (loadedGroups, count) = await GroupRepository.GetAllAsync(options, tenantIdOverride: override_);
             groups = loadedGroups;
             totalCount = count;

@@ -2,10 +2,13 @@
 @attribute [Authorize]
 @using SCIMServer.Core.Models
 @using SCIMServer.DataAccess.Repositories
+@using SCIMServer.Web.Services
 @inject UserRepository UserRepository
 @inject GroupRepository GroupRepository
 @inject TenantRepository TenantRepo
+@inject ActiveSystemState ActiveSystem
 @inject IJSRuntime JSRuntime
+@implements IDisposable
 
 <PageTitle>User Management</PageTitle>
 
@@ -425,16 +428,54 @@
     }
 
     private List<Tenant> tenants = new();
+    // Page-level dropdown shadows the global active system from ActiveSystemState.
+    // The two stay in sync: dropdown change → set the state; state change → update dropdown.
     private string tenantFilterSelection = "";
 
     protected override async Task OnInitializedAsync()
     {
+        ActiveSystem.OnChangeAsync += HandleActiveSystemChangedAsync;
         try { tenants = await TenantRepo.GetAllAsync(); }
         catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
+        // Initial render reflects whatever the sidebar already has selected.
+        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
         await LoadUsers(1);
     }
 
-    private async Task OnTenantFilterChanged() => await LoadUsers(1);
+    public void Dispose()
+    {
+        ActiveSystem.OnChangeAsync -= HandleActiveSystemChangedAsync;
+    }
+
+    private async Task HandleActiveSystemChangedAsync()
+    {
+        // Sidebar switcher changed → update the dropdown + reload the list.
+        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
+        await InvokeAsync(async () =>
+        {
+            await LoadUsers(1);
+            StateHasChanged();
+        });
+    }
+
+    private async Task OnTenantFilterChanged()
+    {
+        // Page dropdown change → push into the shared state. The state's OnChange
+        // fires HandleActiveSystemChangedAsync which reloads; do not double-load.
+        var match = Guid.TryParse(tenantFilterSelection, out var id)
+            ? tenants.FirstOrDefault(t => t.Id == id)
+            : null;
+        if (match?.Id == ActiveSystem.ActiveSystem?.Id)
+        {
+            // No actual change (e.g. clicked the same option). Reload anyway in case it's
+            // the first load.
+            await LoadUsers(1);
+        }
+        else
+        {
+            await ActiveSystem.SetAsync(match);
+        }
+    }
 
     private async Task LoadUsers(int page)
     {
@@ -447,8 +488,9 @@
             Count = pageSize
         };
 
-        Guid? override_ = null;
-        if (Guid.TryParse(tenantFilterSelection, out var parsed)) override_ = parsed;
+        // The active Connected System (from the sidebar switcher) is the source of
+        // truth. The page-level dropdown is mirrored to it on init / state change.
+        var override_ = ActiveSystem.ActiveSystem?.Id;
         var (loadedUsers, count) = await UserRepository.GetAllAsync(options, tenantIdOverride: override_);
         users = loadedUsers;
         totalCount = count;

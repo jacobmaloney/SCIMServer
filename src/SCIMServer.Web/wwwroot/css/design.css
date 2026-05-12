@@ -410,15 +410,31 @@ pre code { background: transparent; padding: 0; }
 .ss-menu-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-2);
                  padding: 6px 8px 4px; font-weight: 600; }
 .ss-menu-item {
-  display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 10px;
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px;
   width: 100%; padding: 8px; border: 0; border-radius: var(--radius-sm); background: transparent;
   cursor: pointer; text-align: left; color: inherit; text-decoration: none;
+  /* min-width:0 lets grid children actually shrink below their intrinsic
+     width so text-overflow: ellipsis kicks in on the name + domain. */
+  min-width: 0;
 }
 .ss-menu-item:hover { background: var(--bg-2); }
 .ss-menu-item.active { background: var(--accent-50); }
-.ss-menu-meta { display: flex; flex-direction: column; min-width: 0; }
+.ss-menu-meta {
+  display: flex; flex-direction: column; min-width: 0;
+}
+.ss-menu-meta > span {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ss-menu-meta > span:first-child { font-weight: 500; font-size: 13px; color: var(--ink); }
 .ss-menu-domain { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+/* The kind-pill on the right of each row must keep its full width. */
+.ss-menu-item .kind-pill { flex-shrink: 0; white-space: nowrap; }
+/* Smaller glyph variant — used in dropdown rows; the main switcher button keeps the default 28px. */
+.ss-glyph-sm { width: 22px !important; height: 22px !important; font-size: 11px !important; border-radius: 6px; }
 .ss-menu-divider { height: 1px; background: var(--line); margin: 6px 4px; }
 .ss-menu-add {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px;

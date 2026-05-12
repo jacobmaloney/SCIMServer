@@ -1,7 +1,10 @@
 @using SCIMServer.Core.Models
 @using SCIMServer.DataAccess.Repositories
+@using SCIMServer.Web.Services
 @inject TenantRepository TenantRepo
+@inject ActiveSystemState ActiveSystem
 @inject NavigationManager NavigationManager
+@implements IDisposable
 
 <div class="nav-wrapper">
     <div class="nav-header">
@@ -18,10 +21,10 @@
         <Authorized>
             <div class="system-switcher">
                 <button class="ss-button" @onclick="ToggleSwitcher" @onclick:stopPropagation="true">
-                    <span class="ss-glyph">@GlyphFor(activeSystem)</span>
+                    <span class="ss-glyph">@GlyphFor(ActiveSystem.ActiveSystem)</span>
                     <span class="ss-meta">
-                        <span class="ss-name">@(activeSystem?.Name ?? "All Connected Systems")</span>
-                        <span class="ss-domain">@(activeSystem?.Domain ?? activeSystem?.Slug ?? "admin · view all")</span>
+                        <span class="ss-name">@(ActiveSystem.ActiveSystem?.Name ?? "All Connected Systems")</span>
+                        <span class="ss-domain">@SubtitleFor(ActiveSystem.ActiveSystem)</span>
                     </span>
                     <i class="oi oi-chevron-bottom ss-chev"></i>
                 </button>
@@ -29,20 +32,21 @@
                 {
                     <div class="ss-menu" @onclick:stopPropagation="true">
                         <div class="ss-menu-label">Connected Systems</div>
-                        <a class="ss-menu-item @(activeSystem == null ? "active" : "")" href="connected-systems"
-                           @onclick="() => SelectSystem(null)" @onclick:preventDefault="true">
-                            <span class="ss-glyph" style="width:24px;height:24px;font-size:11px;">★</span>
+                        <button class="ss-menu-item @(ActiveSystem.ActiveSystem == null ? "active" : "")"
+                                @onclick="() => SelectSystemAsync(null)">
+                            <span class="ss-glyph ss-glyph-sm">★</span>
                             <span class="ss-menu-meta">
                                 <span>All Connected Systems</span>
-                                <span class="ss-menu-domain">admin · cross-system view</span>
+                                <span class="ss-menu-domain">admin · cross-system</span>
                             </span>
                             <span class="kind-pill">Admin</span>
-                        </a>
+                        </button>
                         @foreach (var sys in tenants)
                         {
-                            <button class="ss-menu-item @(activeSystem?.Id == sys.Id ? "active" : "")"
-                                    @onclick="() => SelectSystem(sys)">
-                                <span class="ss-glyph" style="width:24px;height:24px;font-size:11px;">@GlyphFor(sys)</span>
+                            <button class="ss-menu-item @(ActiveSystem.ActiveSystem?.Id == sys.Id ? "active" : "")"
+                                    title="@sys.Name"
+                                    @onclick="() => SelectSystemAsync(sys)">
+                                <span class="ss-glyph ss-glyph-sm">@GlyphFor(sys)</span>
                                 <span class="ss-menu-meta">
                                     <span>@sys.Name</span>
                                     <span class="ss-menu-domain">@(sys.Domain ?? sys.Slug)</span>
@@ -51,7 +55,7 @@
                             </button>
                         }
                         <div class="ss-menu-divider"></div>
-                        <a class="ss-menu-add" href="connected-systems">
+                        <a class="ss-menu-add" href="connected-systems" @onclick="CloseSwitcher">
                             <i class="oi oi-plus"></i> Connect a system
                         </a>
                     </div>
@@ -376,15 +380,15 @@
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
     private void ToggleNavMenu() => collapseNavMenu = !collapseNavMenu;
 
-    // System switcher state — purely visual for Phase 2. "Active system" is a
-    // UI affordance; the admin's data view isn't actually filtered globally
-    // (per-page filter dropdowns already exist for that). Clicking a system
-    // navigates to /connected-systems where the detail / Endpoints modal lives.
+    // System switcher state. The selected system is held in the scoped
+    // ActiveSystemState service so the Users / Groups pages can read it.
     private bool switcherOpen;
     private List<Tenant> tenants = new();
-    private Tenant? activeSystem;
 
-    protected override Task OnInitializedAsync() => Task.CompletedTask;
+    protected override void OnInitialized()
+    {
+        ActiveSystem.OnChangeAsync += HandleActiveChangedAsync;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -402,13 +406,20 @@
         }
     }
 
-    private void ToggleSwitcher() => switcherOpen = !switcherOpen;
-
-    private void SelectSystem(Tenant? sys)
+    public void Dispose()
     {
-        activeSystem = sys;
+        ActiveSystem.OnChangeAsync -= HandleActiveChangedAsync;
+    }
+
+    private Task HandleActiveChangedAsync() => InvokeAsync(StateHasChanged);
+
+    private void ToggleSwitcher() => switcherOpen = !switcherOpen;
+    private void CloseSwitcher() => switcherOpen = false;
+
+    private async Task SelectSystemAsync(Tenant? sys)
+    {
         switcherOpen = false;
-        NavigationManager.NavigateTo("connected-systems");
+        await ActiveSystem.SetAsync(sys);
     }
 
     private static string GlyphFor(Tenant? t)
@@ -417,5 +428,12 @@
         var name = t.Name?.Trim();
         if (string.IsNullOrEmpty(name)) return "?";
         return char.ToUpperInvariant(name[0]).ToString();
+    }
+
+    private static string SubtitleFor(Tenant? t)
+    {
+        if (t == null) return "admin · view all";
+        if (!string.IsNullOrWhiteSpace(t.Domain)) return t.Domain!;
+        return t.Slug;
     }
 }
