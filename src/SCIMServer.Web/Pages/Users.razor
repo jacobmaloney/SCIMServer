@@ -74,7 +74,7 @@
                     {
                         var initials = InitialsFor(user);
                         var primaryEmail = user.Emails?.FirstOrDefault(e => e.Primary)?.Value ?? user.UserName;
-                        <tr class="@(selectedUsers.Contains(user.Id) ? "sel" : "")" @onclick="() => EditUser(user)">
+                        <tr class="@(selectedUsers.Contains(user.Id) ? "sel" : "")" @onclick="() => OpenDrawer(user)">
                             <td class="check-col" @onclick:stopPropagation="true">
                                 <input type="checkbox" class="form-check-input" value="@user.Id"
                                        checked="@selectedUsers.Contains(user.Id)"
@@ -143,6 +143,104 @@
         </nav>
     }
 </div>
+
+@* User detail drawer — slides in from the right on row click. *@
+@if (drawerUser is not null)
+{
+    var ext = drawerUser.EnterpriseExtension;
+    var primary = drawerUser.Emails?.FirstOrDefault(e => e.Primary)?.Value
+                  ?? drawerUser.Emails?.FirstOrDefault()?.Value;
+    var work = drawerUser.PhoneNumbers?.FirstOrDefault(p => p.Type == "work")?.Value
+               ?? drawerUser.PhoneNumbers?.FirstOrDefault()?.Value;
+
+    <div class="drawer-veil" @onclick="CloseDrawer"></div>
+    <aside class="drawer">
+        <div class="drawer-head">
+            <button class="drawer-close" @onclick="CloseDrawer" title="Close (Esc)">
+                <i class="oi oi-x"></i>
+            </button>
+            <div class="drawer-head-main">
+                <span class="avatar avatar-40">@InitialsFor(drawerUser)</span>
+                <div>
+                    <h2>@(string.IsNullOrWhiteSpace(drawerUser.DisplayName) ? drawerUser.UserName : drawerUser.DisplayName)</h2>
+                    <div class="drawer-email">@drawerUser.UserName</div>
+                </div>
+            </div>
+            <div class="drawer-pills">
+                @if (drawerUser.Active)
+                {
+                    <span class="status-pill ok">Active</span>
+                }
+                else
+                {
+                    <span class="status-pill muted">Suspended</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(ext?.Department))
+                {
+                    <span class="kind-pill">@ext.Department</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(ext?.EmployeeNumber))
+                {
+                    <span class="badge mono" style="background: var(--bg-2); color: var(--ink-2); padding: 2px 6px; font-family: var(--font-mono); font-size: 10.5px;">@ext.EmployeeNumber</span>
+                }
+            </div>
+        </div>
+        <div class="drawer-tabs">
+            <button class="@(drawerTab == "overview" ? "cur" : "")" @onclick='() => drawerTab = "overview"'>Overview</button>
+            <button class="@(drawerTab == "raw" ? "cur" : "")" @onclick='() => drawerTab = "raw"'>Raw JSON</button>
+        </div>
+        <div class="drawer-body">
+            @if (drawerTab == "overview")
+            {
+                <section class="drawer-section">
+                    <h4>Profile</h4>
+                    <dl class="kv">
+                        <dt>Display name</dt><dd>@(drawerUser.DisplayName ?? "—")</dd>
+                        <dt>Username</dt><dd class="mono">@drawerUser.UserName</dd>
+                        <dt>Email</dt><dd>@(primary ?? "—")</dd>
+                        <dt>Title</dt><dd>@(drawerUser.Title ?? "—")</dd>
+                        <dt>Phone</dt><dd>@(work ?? "—")</dd>
+                    </dl>
+                </section>
+                <section class="drawer-section">
+                    <h4>Organization</h4>
+                    <dl class="kv">
+                        <dt>Department</dt><dd>@(ext?.Department ?? "—")</dd>
+                        <dt>Manager</dt><dd>@(ext?.Manager?.DisplayName ?? "—")</dd>
+                        <dt>Employee #</dt><dd class="mono">@(ext?.EmployeeNumber ?? "—")</dd>
+                        <dt>Cost center</dt><dd>@(ext?.CostCenter ?? "—")</dd>
+                        <dt>Organization</dt><dd>@(ext?.Organization ?? "—")</dd>
+                    </dl>
+                </section>
+                <section class="drawer-section">
+                    <h4>SCIM metadata</h4>
+                    <dl class="kv">
+                        <dt>ID</dt><dd class="mono">@drawerUser.Id</dd>
+                        <dt>External ID</dt><dd class="mono">@(drawerUser.ExternalId ?? "—")</dd>
+                        <dt>Created</dt><dd class="mono">@drawerUser.Meta.Created.ToString("yyyy-MM-dd HH:mm")</dd>
+                        <dt>Modified</dt><dd class="mono">@drawerUser.Meta.LastModified.ToString("yyyy-MM-dd HH:mm")</dd>
+                        <dt>Version</dt><dd class="mono">@(drawerUser.Meta.Version ?? "1")</dd>
+                    </dl>
+                </section>
+            }
+            else if (drawerTab == "raw")
+            {
+                <section class="drawer-section">
+                    <h4>Raw SCIM resource</h4>
+                    <pre class="drawer-json">@RawJsonFor(drawerUser)</pre>
+                </section>
+            }
+        </div>
+        <div class="drawer-foot">
+            <button class="btn btn-outline-secondary" @onclick="() => ShowUserGroupsModal(drawerUser)">
+                <i class="oi oi-badge"></i> Manage groups
+            </button>
+            <button class="btn btn-primary" @onclick="() => OpenEditFromDrawer(drawerUser)">
+                <i class="oi oi-pencil"></i> Edit
+            </button>
+        </div>
+    </aside>
+}
 
 <!-- Create/Edit User Modal -->
 <div class="modal @(showUserModal ? "show d-block" : "")" tabindex="-1">
@@ -394,6 +492,72 @@
 }
 
 @code {
+    // ── User detail drawer state ────────────────────────────────────────
+    private ScimUser? drawerUser;
+    private string drawerTab = "overview";
+
+    private void OpenDrawer(ScimUser u)
+    {
+        drawerUser = u;
+        drawerTab = "overview";
+    }
+
+    private void CloseDrawer() => drawerUser = null;
+
+    private void OpenEditFromDrawer(ScimUser u)
+    {
+        // Drawer is the read view; the existing modal handles edits.
+        drawerUser = null;
+        EditUser(u);
+    }
+
+    private static string RawJsonFor(ScimUser u)
+    {
+        var primary = u.Emails?.FirstOrDefault(e => e.Primary)
+                      ?? u.Emails?.FirstOrDefault();
+        var payload = new
+        {
+            schemas = new[] {
+                "urn:ietf:params:scim:schemas:core:2.0:User",
+                "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+            },
+            id = u.Id,
+            externalId = u.ExternalId,
+            userName = u.UserName,
+            name = u.Name == null ? null : new
+            {
+                formatted = u.Name.Formatted,
+                familyName = u.Name.FamilyName,
+                givenName = u.Name.GivenName
+            },
+            displayName = u.DisplayName,
+            title = u.Title,
+            active = u.Active,
+            emails = u.Emails?.Select(e => new { e.Value, e.Type, e.Primary }),
+            phoneNumbers = u.PhoneNumbers?.Select(p => new { p.Value, p.Type }),
+            enterprise = new
+            {
+                department = u.EnterpriseExtension?.Department,
+                manager = u.EnterpriseExtension?.Manager?.DisplayName,
+                employeeNumber = u.EnterpriseExtension?.EmployeeNumber,
+                costCenter = u.EnterpriseExtension?.CostCenter,
+                organization = u.EnterpriseExtension?.Organization
+            },
+            meta = new
+            {
+                resourceType = u.Meta.ResourceType,
+                created = u.Meta.Created,
+                lastModified = u.Meta.LastModified,
+                version = u.Meta.Version
+            }
+        };
+        return System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        });
+    }
+
     private static string InitialsFor(ScimUser u)
     {
         // Prefer first letter of given + family. Fall back to first two letters of
