@@ -30,20 +30,27 @@ public class ApiTokenAuthMiddleware
             var tokenService = scope.ServiceProvider.GetRequiredService<ApiTokenService>();
             var apiToken = await tokenService.ValidateTokenAsync(token);
 
-            if (apiToken != null)
+            if (apiToken == null)
             {
-                var claims = new List<Claim>
-                {
-                    new(ClaimTypes.NameIdentifier, apiToken.Id.ToString()),
-                    new(ClaimTypes.Name, apiToken.Name),
-                    new("TokenType", "ApiToken"),
-                    new("scope", "scim:read"),
-                    new("scope", "scim:write")
-                };
-
-                var identity = new ClaimsIdentity(claims, "ApiToken");
-                context.User = new ClaimsPrincipal(identity);
+                // The token announced itself as a scim_ API token but did not validate.
+                // Don't fall through to the JWT handler — it's not a JWT, and silently
+                // continuing would let downstream [Authorize] surface a confusing error.
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers["WWW-Authenticate"] = "Bearer error=\"invalid_token\"";
+                return;
             }
+
+            var claims = new List<Claim>
+            {
+                new(ClaimTypes.NameIdentifier, apiToken.Id.ToString()),
+                new(ClaimTypes.Name, apiToken.Name),
+                new("TokenType", "ApiToken"),
+                new("scope", "scim:read"),
+                new("scope", "scim:write")
+            };
+
+            var identity = new ClaimsIdentity(claims, "ApiToken");
+            context.User = new ClaimsPrincipal(identity);
         }
 
         await _next(context);

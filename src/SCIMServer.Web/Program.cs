@@ -31,10 +31,17 @@ builder.Services.Configure<JwtConfig>(builder.Configuration.GetSection("Jwt"));
 var jwtConfig = new JwtConfig();
 builder.Configuration.GetSection("Jwt").Bind(jwtConfig);
 
-// Set default JWT config if not provided
+// If no JWT secret is configured, generate a random per-process key and log a loud
+// warning. Tokens won't survive a restart, which is the correct behavior for an
+// unconfigured install — the setup wizard persists a proper secret on first run.
 if (string.IsNullOrEmpty(jwtConfig.SecretKey))
 {
-    jwtConfig.SecretKey = "ThisIsADefaultSecretKeyForDevelopmentOnly-ChangeInProduction!";
+    var randomBytes = new byte[64];
+    System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
+    jwtConfig.SecretKey = Convert.ToBase64String(randomBytes);
+    Console.Error.WriteLine(
+        "WARNING: Jwt:SecretKey is not configured. A random per-process key has been " +
+        "generated. Tokens will not survive process restart. Run /setup to persist a key.");
 }
 
 // Configure authentication. Browser sessions use a cookie; API requests with a Bearer
@@ -103,15 +110,26 @@ builder.Services.AddSingleton<ApplicationLogService>();
 builder.Services.AddSingleton<GenerationService>();
 builder.Services.AddHostedService<StartupService>();
 
-// Add CORS
+// CORS is driven by Cors:AllowedOrigins in configuration. If no origins are
+// configured, the policy allows nothing cross-origin — which is the right default
+// for an identity service. Same-origin browser sessions and SCIM clients with
+// Bearer tokens are unaffected by CORS.
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("SCIMPolicy", policy =>
     {
-        policy.AllowAnyOrigin()
-            .AllowAnyMethod()
-            .AllowAnyHeader()
-            .WithExposedHeaders("Location");
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .WithExposedHeaders("Location");
+        }
+        // else: empty policy — no cross-origin requests permitted
     });
 });
 
