@@ -218,13 +218,19 @@ dotnet run --project src/SCIMServer.Web
 ```
 
 ### Database Migrations
-```bash
-# Create database
-sqlcmd -S (localdb)\mssqllocaldb -i Database/CreateDatabase.sql
 
-# Apply updates
-sqlcmd -S (localdb)\mssqllocaldb -i UpdateDatabase.sql
+The schema is managed by `SCIMServer.DataAccess.DatabaseInitializer`, which runs
+automatically on application startup. On a fresh database it executes the
+canonical bootstrap script (`Database/CreateDatabase.sql`, embedded into
+`SCIMServer.DataAccess.dll`); on an existing database it applies any pending
+incremental migrations from `DatabaseMigrator`.
+
+If you prefer to provision the schema manually:
+```bash
+sqlcmd -S (localdb)\mssqllocaldb -d SCIMServer -i Database/CreateDatabase.sql
 ```
+The next application start will pick up any newer migrations and bring the
+schema current.
 
 ## Docker Support
 

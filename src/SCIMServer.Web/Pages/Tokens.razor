@@ -29,11 +29,8 @@
             <p>The API Tokens table is missing or has an incorrect schema. This usually happens when using a database created before this feature was added.</p>
             <hr>
             <p class="mb-0">
-                <strong>To fix this:</strong>
-                <ol>
-                    <li>Run the SQL script at <code>C:\Users\jacob\source\repos\SCIMServer\UpdateDatabase.sql</code> on your database, OR</li>
-                    <li>Go to <a href="/setup">Setup</a> and create a new database</li>
-                </ol>
+                <strong>To fix this:</strong> restart the application — pending migrations are applied automatically at startup.
+                If that doesn't resolve it, re-run <a href="/setup">Setup</a> against a fresh database.
             </p>
         </div>
     }

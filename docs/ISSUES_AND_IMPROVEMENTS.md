@@ -185,12 +185,11 @@ SCIMServer.Domain/        # New project for domain logic
 
 ## Database Schema Issues
 
-### 1. Schema Mismatch
-**Issue**: Differences between CreateDatabase.sql and DatabaseInitializer.cs
-**Files**:
-- `Database/CreateDatabase.sql`
-- `src/SCIMServer.DataAccess/DatabaseInitializer.cs`
-**Solution**: Reconcile and create migration strategy
+### 1. Schema Mismatch — RESOLVED
+**Status**: `Database/CreateDatabase.sql` is now the single canonical bootstrap
+schema. It is embedded into `SCIMServer.DataAccess.dll` and loaded by
+`DatabaseInitializer.GetInitialSchemaScript()`. The old inline C# schema has
+been removed. Incremental changes go in `DatabaseMigrator`.
 
 ### 2. Missing Indexes
 **Tables Needing Indexes**:

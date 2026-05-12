@@ -16,4 +16,8 @@
     <ProjectReference Include="..\SCIMServer.Core\SCIMServer.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\Database\CreateDatabase.sql" LogicalName="SCIMServer.DataAccess.CreateDatabase.sql" />
+  </ItemGroup>
+
 </Project>
