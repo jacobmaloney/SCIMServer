@@ -1,3 +1,8 @@
+@using SCIMServer.Core.Models
+@using SCIMServer.DataAccess.Repositories
+@inject TenantRepository TenantRepo
+@inject NavigationManager NavigationManager
+
 <div class="nav-wrapper">
     <div class="nav-header">
         <a class="nav-brand" href="">
@@ -8,7 +13,53 @@
             <span class="nav-toggle-icon"></span>
         </button>
     </div>
-    
+
+    <AuthorizeView>
+        <Authorized>
+            <div class="system-switcher">
+                <button class="ss-button" @onclick="ToggleSwitcher" @onclick:stopPropagation="true">
+                    <span class="ss-glyph">@GlyphFor(activeSystem)</span>
+                    <span class="ss-meta">
+                        <span class="ss-name">@(activeSystem?.Name ?? "All Connected Systems")</span>
+                        <span class="ss-domain">@(activeSystem?.Domain ?? activeSystem?.Slug ?? "admin · view all")</span>
+                    </span>
+                    <i class="oi oi-chevron-bottom ss-chev"></i>
+                </button>
+                @if (switcherOpen)
+                {
+                    <div class="ss-menu" @onclick:stopPropagation="true">
+                        <div class="ss-menu-label">Connected Systems</div>
+                        <a class="ss-menu-item @(activeSystem == null ? "active" : "")" href="connected-systems"
+                           @onclick="() => SelectSystem(null)" @onclick:preventDefault="true">
+                            <span class="ss-glyph" style="width:24px;height:24px;font-size:11px;">★</span>
+                            <span class="ss-menu-meta">
+                                <span>All Connected Systems</span>
+                                <span class="ss-menu-domain">admin · cross-system view</span>
+                            </span>
+                            <span class="kind-pill">Admin</span>
+                        </a>
+                        @foreach (var sys in tenants)
+                        {
+                            <button class="ss-menu-item @(activeSystem?.Id == sys.Id ? "active" : "")"
+                                    @onclick="() => SelectSystem(sys)">
+                                <span class="ss-glyph" style="width:24px;height:24px;font-size:11px;">@GlyphFor(sys)</span>
+                                <span class="ss-menu-meta">
+                                    <span>@sys.Name</span>
+                                    <span class="ss-menu-domain">@(sys.Domain ?? sys.Slug)</span>
+                                </span>
+                                <span class="kind-pill @(sys.SystemType == "Real" ? "kind-real" : "kind-emulator")">@sys.SystemType</span>
+                            </button>
+                        }
+                        <div class="ss-menu-divider"></div>
+                        <a class="ss-menu-add" href="connected-systems">
+                            <i class="oi oi-plus"></i> Connect a system
+                        </a>
+                    </div>
+                }
+            </div>
+        </Authorized>
+    </AuthorizeView>
+
     <nav class="nav-menu @NavMenuCssClass">
         <div class="nav-section nav-section-main">
             <div class="nav-section-title">Main</div>
@@ -322,11 +373,49 @@
 
 @code {
     private bool collapseNavMenu = true;
-
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+    private void ToggleNavMenu() => collapseNavMenu = !collapseNavMenu;
 
-    private void ToggleNavMenu()
+    // System switcher state — purely visual for Phase 2. "Active system" is a
+    // UI affordance; the admin's data view isn't actually filtered globally
+    // (per-page filter dropdowns already exist for that). Clicking a system
+    // navigates to /connected-systems where the detail / Endpoints modal lives.
+    private bool switcherOpen;
+    private List<Tenant> tenants = new();
+    private Tenant? activeSystem;
+
+    protected override Task OnInitializedAsync() => Task.CompletedTask;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        collapseNavMenu = !collapseNavMenu;
+        if (!firstRender) return;
+        try
+        {
+            tenants = await TenantRepo.GetAllAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            // Sidebar must never crash the layout if the DB is unreachable —
+            // e.g. before setup wizard completes. Log and render the empty state.
+            Console.WriteLine($"NavMenu: failed to load tenants — {ex.Message}");
+        }
+    }
+
+    private void ToggleSwitcher() => switcherOpen = !switcherOpen;
+
+    private void SelectSystem(Tenant? sys)
+    {
+        activeSystem = sys;
+        switcherOpen = false;
+        NavigationManager.NavigateTo("connected-systems");
+    }
+
+    private static string GlyphFor(Tenant? t)
+    {
+        if (t == null) return "★";
+        var name = t.Name?.Trim();
+        if (string.IsNullOrEmpty(name)) return "?";
+        return char.ToUpperInvariant(name[0]).ToString();
     }
 }

@@ -77,66 +77,68 @@
     }
     else
     {
-        <div class="row">
+        <div class="tenant-grid">
             @foreach (var s in stats)
             {
-                <div class="col-md-6 col-lg-4 mb-3">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                <h5 class="card-title mb-0">@s.Name</h5>
-                                @if (s.SystemType == "Real")
-                                {
-                                    <span class="badge bg-success">REAL</span>
-                                }
-                                else
-                                {
-                                    <span class="badge bg-warning text-dark">EMULATOR</span>
-                                }
-                            </div>
-                            <p class="text-muted small mb-2">
-                                <code>@s.Slug</code>
-                                @if (!string.IsNullOrWhiteSpace(s.Domain))
-                                {
-                                    <span class="ms-2">@s.Domain</span>
-                                }
-                            </p>
+                <div class="tenant-card @(s.IsActive ? "" : "is-inactive")">
+                    <div class="tenant-card-head">
+                        <span class="avatar avatar-40">@GlyphFor(s)</span>
+                        <div class="tenant-card-title">
+                            <div class="tenant-card-name">@s.Name</div>
+                            <div class="tenant-card-domain">@(string.IsNullOrWhiteSpace(s.Domain) ? s.Slug : s.Domain)</div>
+                        </div>
+                        <span class="kind-pill @(s.SystemType == "Real" ? "kind-real" : "kind-emulator")">@s.SystemType</span>
+                    </div>
+
+                    <div class="tenant-card-stats">
+                        <div>
+                            <span class="tenant-stat-label">Users</span>
+                            <span class="tenant-stat-value">@s.UserCount</span>
+                        </div>
+                        <div>
+                            <span class="tenant-stat-label">Groups</span>
+                            <span class="tenant-stat-value">@s.GroupCount</span>
+                        </div>
+                        <div>
+                            <span class="tenant-stat-label">Tokens</span>
+                            <span class="tenant-stat-value">@s.TokenCount</span>
+                        </div>
+                    </div>
+
+                    <div class="tenant-card-foot">
+                        <div class="d-flex align-items-center gap-2">
                             @if (!s.IsActive)
                             {
-                                <span class="badge bg-secondary mb-2">Inactive</span>
+                                <span class="kind-pill">Inactive</span>
                             }
-                            <div class="row text-center mt-3">
-                                <div class="col">
-                                    <div class="fw-bold">@s.UserCount</div>
-                                    <small class="text-muted">Users</small>
-                                </div>
-                                <div class="col">
-                                    <div class="fw-bold">@s.GroupCount</div>
-                                    <small class="text-muted">Groups</small>
-                                </div>
-                                <div class="col">
-                                    <div class="fw-bold">@s.TokenCount</div>
-                                    <small class="text-muted">Tokens</small>
-                                </div>
-                            </div>
+                            else
+                            {
+                                <span class="status-dot ok"></span>
+                                <span class="text-muted" style="font-size: 11.5px;">Active</span>
+                            }
                         </div>
-                        <div class="card-footer bg-transparent">
-                            <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => ShowEndpoints(s)">
+                        <div class="d-flex align-items-center gap-1">
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => ShowEndpoints(s)">
                                 <i class="oi oi-link-intact"></i> Endpoints
                             </button>
                             <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditSystem(s.TenantId)">
-                                <i class="oi oi-pencil"></i> Edit
+                                <i class="oi oi-pencil"></i>
                             </button>
                             @if (s.TenantId != TenantRepository.DefaultTenantId)
                             {
-                                <button class="btn btn-sm btn-outline-danger float-end" @onclick="() => DeactivateSystem(s)">
-                                    <i class="oi oi-ban"></i> Deactivate
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateSystem(s)">
+                                    <i class="oi oi-ban"></i>
                                 </button>
                             }
                         </div>
                     </div>
                 </div>
             }
+
+            <button class="tenant-card-add" @onclick="ShowCreateModal">
+                <i class="oi oi-plus" style="font-size: 24px;"></i>
+                Connect a system
+            </button>
         </div>
     }
 </div>
@@ -226,48 +228,48 @@
                         <code>@endpointsFor.Slug</code>.
                     </p>
 
-                    <h6 class="mt-3">URLs</h6>
+                    <div class="section-eyebrow">URLs</div>
                     <div class="table-responsive">
-                        <table class="table table-sm table-bordered align-middle">
-                            <thead class="table-light">
-                                <tr><th style="width: 24%">Surface</th><th>URL</th><th style="width: 14%">Method</th><th style="width: 18%">Required scope</th></tr>
+                        <table class="endpoints-table">
+                            <thead>
+                                <tr><th style="width: 24%">Surface</th><th>URL</th><th style="width: 16%">Method</th><th style="width: 14%">Scope</th></tr>
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td><strong>SCIM 2.0</strong><br /><small class="text-muted">Users</small></td>
+                                    <td><strong>SCIM 2.0 · Users</strong></td>
                                     <td><code>@baseUrl/scim/v2/Users</code></td>
-                                    <td>POST / GET / PATCH</td>
-                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                    <td class="text-muted">POST / GET / PATCH</td>
+                                    <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                                 <tr>
-                                    <td><strong>SCIM 2.0</strong><br /><small class="text-muted">Groups</small></td>
+                                    <td><strong>SCIM 2.0 · Groups</strong></td>
                                     <td><code>@baseUrl/scim/v2/Groups</code></td>
-                                    <td>POST / GET / PATCH</td>
-                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                    <td class="text-muted">POST / GET / PATCH</td>
+                                    <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                                 <tr>
-                                    <td><strong>Generic REST</strong><br /><small class="text-muted">Users</small></td>
+                                    <td><strong>Generic REST · Users</strong></td>
                                     <td><code>@baseUrl/api/v1/users</code></td>
-                                    <td>POST / GET / PATCH / DELETE</td>
-                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                    <td class="text-muted">POST / GET / PATCH / DELETE</td>
+                                    <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                                 <tr>
-                                    <td><strong>Generic REST</strong><br /><small class="text-muted">Groups</small></td>
+                                    <td><strong>Generic REST · Groups</strong></td>
                                     <td><code>@baseUrl/api/v1/groups</code></td>
-                                    <td>POST / GET / DELETE</td>
-                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                    <td class="text-muted">POST / GET / DELETE</td>
+                                    <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                                 <tr>
-                                    <td><strong>SQL emulator</strong><br /><small class="text-muted">Local SQL logins</small></td>
+                                    <td><strong>SQL emulator</strong></td>
                                     <td><code>@baseUrl/sql/v1/accounts</code></td>
-                                    <td>POST / GET / PATCH / DELETE</td>
-                                    <td><span class="badge bg-info text-dark">Tenant</span></td>
+                                    <td class="text-muted">POST / GET / PATCH / DELETE</td>
+                                    <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
 
-                    <h6 class="mt-4">Tokens scoped to this Connected System</h6>
+                    <div class="section-eyebrow">Tokens scoped to this Connected System</div>
                     @if (endpointTokens.Count == 0)
                     {
                         <div class="alert alert-warning py-2">
@@ -277,8 +279,8 @@
                     }
                     else
                     {
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light">
+                        <table class="endpoints-table">
+                            <thead>
                                 <tr><th>Name</th><th>Scope</th><th>Created</th><th>Bearer header</th></tr>
                             </thead>
                             <tbody>
@@ -293,8 +295,8 @@
                                                 <br /><small class="text-muted">@t.Description</small>
                                             }
                                         </td>
-                                        <td><span class="badge bg-info text-dark">@(string.IsNullOrEmpty(t.Scope) ? "Tenant" : t.Scope)</span></td>
-                                        <td><small>@t.CreatedAt.ToString("yyyy-MM-dd")</small></td>
+                                        <td><span class="kind-pill">@(string.IsNullOrEmpty(t.Scope) ? "Tenant" : t.Scope)</span></td>
+                                        <td class="mono" style="font-size: 11.5px; color: var(--muted);">@t.CreatedAt.ToString("yyyy-MM-dd")</td>
                                         <td>
                                             @if (demoRaw != null)
                                             {
@@ -311,14 +313,14 @@
                         </table>
                     }
 
-                    <h6 class="mt-4">Example: create a user via SCIM</h6>
-                    <pre class="bg-light p-3 mb-2 small" style="white-space: pre-wrap;"><code>@ScimCurlExample()</code></pre>
+                    <div class="section-eyebrow">Example: create a user via SCIM</div>
+                    <pre class="p-3 mb-2 small" style="white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);"><code>@ScimCurlExample()</code></pre>
 
-                    <h6 class="mt-4">Example: create a user via Generic REST</h6>
-                    <pre class="bg-light p-3 mb-2 small" style="white-space: pre-wrap;"><code>@GenericCurlExample()</code></pre>
+                    <div class="section-eyebrow">Example: create a user via Generic REST</div>
+                    <pre class="p-3 mb-2 small" style="white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);"><code>@GenericCurlExample()</code></pre>
 
-                    <h6 class="mt-4">Example: PowerShell <code>Invoke-RestMethod</code> from ARS workflow</h6>
-                    <pre class="bg-light p-3 mb-0 small" style="white-space: pre-wrap;"><code>@PowershellExample()</code></pre>
+                    <div class="section-eyebrow">Example: PowerShell <code>Invoke-RestMethod</code> from ARS workflow</div>
+                    <pre class="p-3 mb-0 small" style="white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);"><code>@PowershellExample()</code></pre>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @onclick="CloseEndpoints">Close</button>
@@ -339,6 +341,13 @@
     private Tenant form = new();
     private string errorMessage = "";
     private DemoSeedService.SeedResult? lastSeedResult;
+
+    private static string GlyphFor(TenantStats s)
+    {
+        var name = s.Name?.Trim();
+        if (string.IsNullOrEmpty(name)) return "?";
+        return char.ToUpperInvariant(name[0]).ToString();
+    }
 
     // Endpoints modal state
     private TenantStats? endpointsFor;
