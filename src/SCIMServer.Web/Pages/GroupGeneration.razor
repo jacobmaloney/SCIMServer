@@ -6,6 +6,7 @@
 @using SCIMServer.Web.Services
 @inject GroupRepository GroupRepository
 @inject UserRepository UserRepository
+@inject TenantRepository TenantRepo
 @inject GenerationService GenerationService
 @inject NavigationManager Navigation
 
@@ -53,7 +54,19 @@
             <div class="row">
                 <div class="col-md-6">
                     <h5>Basic Settings</h5>
-                    
+
+                    <div class="mb-3">
+                        <label class="form-label">Target System <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="targetSystemSelection">
+                            <option value="">— Select a Connected System —</option>
+                            @foreach (var sys in tenants)
+                            {
+                                <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
+                            }
+                        </select>
+                        <small class="form-text text-muted">The Connected System the generated groups will belong to. Required.</small>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label">Number of Groups</label>
                         <input type="number" class="form-control" @bind="numberOfGroups" min="1" max="1000" />
@@ -152,13 +165,15 @@
     private bool addDescriptions = true;
     private int minMembers = 5;
     private int maxMembers = 20;
-    
+
     private bool isGenerating = false;
     private bool generationComplete = false;
     private int groupsCreated = 0;
     private string? errorMessage;
     private string? currentGenerationId;
     private Timer? statusCheckTimer;
+    private List<Tenant> tenants = new();
+    private string targetSystemSelection = "";
     
     private readonly Random random = new Random();
     
@@ -186,6 +201,12 @@
 
     private async Task GenerateGroups()
     {
+        if (string.IsNullOrEmpty(targetSystemSelection) || !Guid.TryParse(targetSystemSelection, out var tenantId))
+        {
+            errorMessage = "Target System is required.";
+            return;
+        }
+
         isGenerating = true;
         generationComplete = false;
         errorMessage = null;
@@ -208,6 +229,7 @@
             // Create generation options
             var options = new GroupGenerationOptions
             {
+                TenantId = tenantId,
                 GroupType = groupType,
                 NamePrefix = namePrefix,
                 AddRandomMembers = addRandomMembers,
@@ -290,9 +312,11 @@
         generationComplete = false;
     }
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         CheckForActiveGeneration();
+        try { tenants = await TenantRepo.GetAllAsync(); }
+        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
     }
 
     private void CheckForActiveGeneration()

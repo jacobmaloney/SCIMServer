@@ -160,7 +160,7 @@ namespace SCIMServer.Web.Services
                             scimUser.PhoneNumbers.Add(new ScimPhoneNumber { Value = genUser.PhoneNumber, Type = "work" });
                         }
                         
-                        var createdUser = await userRepository.CreateAsync(scimUser);
+                        var createdUser = await userRepository.CreateAsync(scimUser, options.TenantId);
                         userIdMapping[genUser.Id] = createdUser.Id;
                         
                         status.CompletedItems++;
@@ -185,7 +185,7 @@ namespace SCIMServer.Web.Services
                             Members = new List<ScimGroupMember>()
                         };
                         
-                        await groupRepository.CreateAsync(scimGroup);
+                        await groupRepository.CreateAsync(scimGroup, options.TenantId);
                     }
                     catch (Exception ex)
                     {
@@ -288,7 +288,7 @@ namespace SCIMServer.Web.Services
                             }
                         }
                         
-                        var createdGroup = await groupRepository.CreateAsync(group);
+                        var createdGroup = await groupRepository.CreateAsync(group, options.TenantId);
                         await _logger.LogInfoAsync("GroupGeneration", $"Successfully created group: {groupName} with ID: {createdGroup.Id}");
                         status.CompletedItems++;
                         status.UpdateProgress();
@@ -350,6 +350,12 @@ namespace SCIMServer.Web.Services
     /// </summary>
     public class GroupGenerationOptions
     {
+        /// <summary>
+        /// Target Connected System (Tenant) the generated groups belong to.
+        /// Required at the UI level; persistence layer falls back to Default if null.
+        /// </summary>
+        public Guid? TenantId { get; set; }
+
         public string GroupType { get; set; } = "mixed";
         public string NamePrefix { get; set; } = "";
         public bool AddRandomMembers { get; set; } = true;

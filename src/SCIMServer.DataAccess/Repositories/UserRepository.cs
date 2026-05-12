@@ -253,17 +253,22 @@ namespace SCIMServer.DataAccess.Repositories
         }
 
         /// <summary>
-        /// Creates a new user
+        /// Creates a new user under the context's tenant (or the Default tenant when none).
         /// </summary>
-        /// <param name="user">The user to create</param>
-        /// <returns>The created user</returns>
-        public async Task<ScimUser> CreateAsync(ScimUser user)
+        public Task<ScimUser> CreateAsync(ScimUser user) => CreateAsync(user, tenantOverride: null);
+
+        /// <summary>
+        /// Creates a new user under an explicit tenant — used by background tasks
+        /// (e.g. data generation) that don't have an HTTP-scoped TenantContext.
+        /// </summary>
+        public async Task<ScimUser> CreateAsync(ScimUser user, Guid? tenantOverride)
         {
             var id = Guid.NewGuid();
             user.Id = id.ToString();
             user.Meta.Created = DateTime.UtcNow;
             user.Meta.LastModified = DateTime.UtcNow;
             user.Meta.Version = "1";
+            var insertTenantId = tenantOverride ?? InsertTenantId;
 
             var sql = @"
                 INSERT INTO Users (
@@ -286,7 +291,7 @@ namespace SCIMServer.DataAccess.Repositories
                 await connection.ExecuteAsync(sql, new
                 {
                     Id = id,
-                    TenantId = InsertTenantId,
+                    TenantId = insertTenantId,
                     user.ExternalId,
                     user.UserName,
                     user.Active,

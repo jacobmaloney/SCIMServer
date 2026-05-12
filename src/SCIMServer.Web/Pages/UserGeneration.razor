@@ -8,6 +8,7 @@
 @using SCIMServer.Web.Services
 @inject UserRepository UserRepository
 @inject GroupRepository GroupRepository
+@inject TenantRepository TenantRepo
 @inject GenerationService GenerationService
 @inject NavigationManager Navigation
 
@@ -41,7 +42,19 @@
                 <div class="row">
                     <div class="col-md-6">
                         <h5>Basic Settings</h5>
-                        
+
+                        <div class="mb-3">
+                            <label class="form-label">Target System <span class="text-danger">*</span></label>
+                            <InputSelect class="form-select" @bind-Value="targetSystemSelection">
+                                <option value="">— Select a Connected System —</option>
+                                @foreach (var sys in tenants)
+                                {
+                                    <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
+                                }
+                            </InputSelect>
+                            <small class="form-text text-muted">The Connected System the generated users will belong to. Required.</small>
+                        </div>
+
                         <div class="mb-3">
                             <label class="form-label">Number of Users</label>
                             <InputNumber class="form-control" @bind-Value="options.NumberOfUsers" min="1" max="10000" />
@@ -193,11 +206,15 @@
     private bool populateGroupsWithRandomMembers = true;
     private string? currentGenerationId;
     private Timer? statusCheckTimer;
+    private List<Tenant> tenants = new();
+    private string targetSystemSelection = "";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         activePercentage = (int)(options.ActiveUserPercentage * 100);
         CheckForActiveGeneration();
+        try { tenants = await TenantRepo.GetAllAsync(); }
+        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
     }
 
     private void CheckForActiveGeneration()
@@ -214,6 +231,12 @@
 
     private Task HandleValidSubmit()
     {
+        if (string.IsNullOrEmpty(targetSystemSelection) || !Guid.TryParse(targetSystemSelection, out var tenantId))
+        {
+            Console.WriteLine("Target System is required.");
+            return Task.CompletedTask;
+        }
+        options.TenantId = tenantId;
         isGenerating = true;
 
         try

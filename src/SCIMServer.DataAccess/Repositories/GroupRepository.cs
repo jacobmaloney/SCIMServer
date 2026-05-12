@@ -153,17 +153,22 @@ namespace SCIMServer.DataAccess.Repositories
         }
 
         /// <summary>
-        /// Creates a new group
+        /// Creates a new group under the context's tenant (or Default when none).
         /// </summary>
-        /// <param name="group">The group to create</param>
-        /// <returns>The created group</returns>
-        public async Task<ScimGroup> CreateAsync(ScimGroup group)
+        public Task<ScimGroup> CreateAsync(ScimGroup group) => CreateAsync(group, tenantOverride: null);
+
+        /// <summary>
+        /// Creates a new group under an explicit tenant — used by background tasks
+        /// (e.g. group generation) that don't have an HTTP-scoped TenantContext.
+        /// </summary>
+        public async Task<ScimGroup> CreateAsync(ScimGroup group, Guid? tenantOverride)
         {
             var id = Guid.NewGuid();
             group.Id = id.ToString();
             group.Meta.Created = DateTime.UtcNow;
             group.Meta.LastModified = DateTime.UtcNow;
             group.Meta.Version = "1";
+            var insertTenantId = tenantOverride ?? InsertTenantId;
 
             var sql = @"
                 INSERT INTO Groups (
@@ -180,7 +185,7 @@ namespace SCIMServer.DataAccess.Repositories
                 await connection.ExecuteAsync(sql, new
                 {
                     Id = id,
-                    TenantId = InsertTenantId,
+                    TenantId = insertTenantId,
                     DisplayName = group.DisplayName,
                     Description = group.Description,
                     Type = group.Type,

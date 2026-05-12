@@ -9,6 +9,13 @@ namespace SCIMServer.Core.Generation
     public class UserGenerationOptions
     {
         /// <summary>
+        /// Target Connected System (UI label) / Tenant (DB) the generated users
+        /// belong to. Required at the UI level; persistence layer falls back to
+        /// the Default tenant if null.
+        /// </summary>
+        public Guid? TenantId { get; set; }
+
+        /// <summary>
         /// Gets or sets the number of users to generate
         /// </summary>
         public int NumberOfUsers { get; set; } = 100;
