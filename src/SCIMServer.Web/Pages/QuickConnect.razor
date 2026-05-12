@@ -124,19 +124,13 @@
                     <h3 class="mb-0"><i class="oi oi-code"></i> Example Requests</h3>
                 </div>
                 <div class="card-body">
-                    <ul class="nav nav-tabs" id="exampleTabs" role="tablist">
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link active" id="curl-tab" data-bs-toggle="tab" data-bs-target="#curl" type="button">cURL</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="postman-tab" data-bs-toggle="tab" data-bs-target="#postman" type="button">Postman</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="powershell-tab" data-bs-toggle="tab" data-bs-target="#powershell" type="button">PowerShell</button>
-                        </li>
-                    </ul>
-                    <div class="tab-content mt-3" id="exampleTabContent">
-                        <div class="tab-pane fade show active" id="curl" role="tabpanel">
+                    <div class="drawer-tabs" style="margin: 0; border-bottom: 1px solid var(--line);">
+                        <button class="@(exampleTab == "curl" ? "cur" : "")" @onclick='() => exampleTab = "curl"'>cURL</button>
+                        <button class="@(exampleTab == "postman" ? "cur" : "")" @onclick='() => exampleTab = "postman"'>Postman</button>
+                        <button class="@(exampleTab == "powershell" ? "cur" : "")" @onclick='() => exampleTab = "powershell"'>PowerShell</button>
+                    </div>
+                    <div class="mt-3">
+                        <div style="display: @(exampleTab == "curl" ? "block" : "none");">
                             <h5>Get All Users</h5>
                             <pre class="bg-light p-3"><code>curl -X GET "@baseUrl/scim/v2/Users" \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -167,7 +161,7 @@
   -H "Accept: application/scim+json"</code></pre>
                         </div>
                         
-                        <div class="tab-pane fade" id="postman" role="tabpanel">
+                        <div style="display: @(exampleTab == "postman" ? "block" : "none");">
                             <h5>Postman Configuration</h5>
                             <ol>
                                 <li>Create a new request in Postman</li>
@@ -182,7 +176,7 @@
                             </ol>
                         </div>
                         
-                        <div class="tab-pane fade" id="powershell" role="tabpanel">
+                        <div style="display: @(exampleTab == "powershell" ? "block" : "none");">
                             <h5>Get All Users</h5>
                             <pre class="bg-light p-3"><code>$headers = @@{
     "Authorization" = "Bearer YOUR_TOKEN"
@@ -361,6 +355,10 @@ Invoke-RestMethod -Uri "@baseUrl/scim/v2/Users" -Headers $headers -Method Post -
     private bool testing = false;
     private string testResult = "";
     private bool testSuccess = false;
+    // Active example-requests tab. Bootstrap's data-bs-toggle tabs need
+    // bootstrap.bundle.js which we don't load — driving them with Blazor state
+    // instead matches the rest of the app (drawer, modal, etc).
+    private string exampleTab = "curl";
 
     protected override void OnInitialized()
     {
