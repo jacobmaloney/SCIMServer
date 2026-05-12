@@ -2,7 +2,9 @@
 @attribute [Authorize]
 @using SCIMServer.Core.Models
 @using SCIMServer.DataAccess.Repositories
+@using SCIMServer.Web.Services
 @inject TenantRepository TenantRepo
+@inject DemoSeedService DemoSeed
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
@@ -14,10 +16,45 @@
             <h1>Connected Systems</h1>
             <p class="text-muted">External identity targets this SCIM server connects to.</p>
         </div>
-        <button class="btn btn-primary" @onclick="ShowCreateModal">
-            <i class="oi oi-plus"></i> + Connect a system
-        </button>
+        <div>
+            <button class="btn btn-outline-secondary me-2" @onclick="SeedDemo" disabled="@seeding">
+                @if (seeding)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                }
+                <i class="oi oi-data-transfer-download"></i> Seed Demo Data
+            </button>
+            <button class="btn btn-primary" @onclick="ShowCreateModal">
+                <i class="oi oi-plus"></i> + Connect a system
+            </button>
+        </div>
     </div>
+
+    @if (lastSeedResult != null)
+    {
+        <div class="alert alert-success">
+            <h5 class="alert-heading">Demo seed complete</h5>
+            <p class="mb-1">
+                Created: <strong>@lastSeedResult.ConnectedSystemsCreated</strong> connected systems,
+                <strong>@lastSeedResult.UsersCreated</strong> users,
+                <strong>@lastSeedResult.GroupsCreated</strong> groups,
+                <strong>@lastSeedResult.MembershipsCreated</strong> memberships,
+                <strong>@lastSeedResult.TokensCreated</strong> tokens.
+            </p>
+            @if (lastSeedResult.Notes.Any())
+            {
+                <details class="mt-2">
+                    <summary>Details</summary>
+                    <ul class="small mb-0">
+                        @foreach (var n in lastSeedResult.Notes)
+                        {
+                            <li>@n</li>
+                        }
+                    </ul>
+                </details>
+            }
+        </div>
+    }
 
     @if (loading)
     {
@@ -163,9 +200,33 @@
     private bool loading = true;
     private bool showModal;
     private bool saving;
+    private bool seeding;
     private Guid? editingId;
     private Tenant form = new();
     private string errorMessage = "";
+    private DemoSeedService.SeedResult? lastSeedResult;
+
+    private async Task SeedDemo()
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            "Seed demo data? This creates two Connected Systems (Kodak — Entra ID Staging, Internal App Demo), 25 users + 5 groups with the SOD trap pair, and four fixed-value API tokens. The operation is idempotent — re-running is safe.");
+        if (!ok) return;
+        seeding = true;
+        lastSeedResult = null;
+        try
+        {
+            lastSeedResult = await DemoSeed.SeedAsync();
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Seed failed: {ex.Message}";
+        }
+        finally
+        {
+            seeding = false;
+        }
+    }
 
     protected override Task OnInitializedAsync() => Task.CompletedTask;
 
