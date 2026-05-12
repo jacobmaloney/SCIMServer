@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using SCIMServer.Core.Models;
+using SCIMServer.Core.Services;
 using Microsoft.Data.SqlClient;
 
 namespace SCIMServer.DataAccess.Repositories
@@ -13,12 +14,26 @@ namespace SCIMServer.DataAccess.Repositories
     /// </summary>
     public class GroupRepository : BaseRepository
     {
+        private readonly ITenantContext? _tenantContext;
+
         /// <summary>
-        /// Initializes a new instance of the GroupRepository class
+        /// Initializes a new instance of the GroupRepository class. Tenant scoping
+        /// (UI label: "Connected Systems") is applied automatically when
+        /// <paramref name="tenantContext"/> is supplied and the caller is non-Admin.
         /// </summary>
-        /// <param name="databaseConfig">Database configuration</param>
-        public GroupRepository(DatabaseConfig databaseConfig) : base(databaseConfig)
+        public GroupRepository(DatabaseConfig databaseConfig, ITenantContext? tenantContext = null)
+            : base(databaseConfig)
         {
+            _tenantContext = tenantContext;
+        }
+
+        private Guid? ScopeTenantId => _tenantContext is { IsAdmin: false } ? _tenantContext.TenantId : null;
+        private Guid InsertTenantId => _tenantContext?.TenantId ?? TenantRepository.DefaultTenantId;
+        private string TenantFilter(string alias) =>
+            ScopeTenantId.HasValue ? $" AND {alias}.TenantId = @_TenantId " : string.Empty;
+        private void AddTenantParam(DynamicParameters p)
+        {
+            if (ScopeTenantId.HasValue) p.Add("_TenantId", ScopeTenantId.Value);
         }
 
         /// <summary>
@@ -28,19 +43,23 @@ namespace SCIMServer.DataAccess.Repositories
         /// <returns>The group if found, null otherwise</returns>
         public async Task<ScimGroup?> GetByIdAsync(Guid id)
         {
-            var sql = @"
+            var sql = $@"
                 SELECT g.*, u.UserName as OwnerDisplay
                 FROM Groups g
                 LEFT JOIN Users u ON g.OwnerId = u.Id
-                WHERE g.Id = @Id;
+                WHERE g.Id = @Id {TenantFilter("g")};
 
                 SELECT gm.*, u.UserName as Display
                 FROM GroupMembers gm
                 LEFT JOIN Users u ON gm.Value = u.Id
                 WHERE gm.GroupId = @Id;";
 
+            var p = new DynamicParameters();
+            p.Add("Id", id);
+            AddTenantParam(p);
+
             using var connection = CreateConnection();
-            using var multi = await connection.QueryMultipleAsync(sql, new { Id = id });
+            using var multi = await connection.QueryMultipleAsync(sql, p);
 
             var group = await multi.ReadSingleOrDefaultAsync<dynamic>();
             if (group == null) return null;
@@ -70,7 +89,7 @@ namespace SCIMServer.DataAccess.Repositories
             string? filterSql = null,
             DynamicParameters? filterParams = null)
         {
-            var whereClause = "WHERE 1=1";
+            var whereClause = "WHERE 1=1" + TenantFilter("g");
             if (!string.IsNullOrWhiteSpace(filterSql))
             {
                 whereClause += $" AND ({filterSql})";
@@ -88,6 +107,7 @@ namespace SCIMServer.DataAccess.Repositories
             var parameters = new DynamicParameters();
             parameters.Add("Offset", options.StartIndex - 1);
             parameters.Add("Limit", options.Count);
+            AddTenantParam(parameters);
             if (filterParams != null)
             {
                 parameters.AddDynamicParams(filterParams);
@@ -147,9 +167,9 @@ namespace SCIMServer.DataAccess.Repositories
 
             var sql = @"
                 INSERT INTO Groups (
-                    Id, DisplayName, Description, Type, OwnerId, Created, LastModified, Version
+                    Id, TenantId, DisplayName, Description, Type, OwnerId, Created, LastModified, Version
                 ) VALUES (
-                    @Id, @DisplayName, @Description, @Type, @OwnerId, @Created, @LastModified, @Version
+                    @Id, @TenantId, @DisplayName, @Description, @Type, @OwnerId, @Created, @LastModified, @Version
                 );";
 
             using var connection = CreateConnection();
@@ -160,6 +180,7 @@ namespace SCIMServer.DataAccess.Repositories
                 await connection.ExecuteAsync(sql, new
                 {
                     Id = id,
+                    TenantId = InsertTenantId,
                     DisplayName = group.DisplayName,
                     Description = group.Description,
                     Type = group.Type,
@@ -213,7 +234,7 @@ namespace SCIMServer.DataAccess.Repositories
             var newVersion = (int.Parse(group.Meta.Version ?? "1") + 1).ToString();
             group.Meta.Version = newVersion;
 
-            var sql = @"
+            var sql = $@"
                 UPDATE Groups SET
                     DisplayName = @DisplayName,
                     Description = @Description,
@@ -221,23 +242,24 @@ namespace SCIMServer.DataAccess.Repositories
                     OwnerId = @OwnerId,
                     LastModified = @LastModified,
                     Version = @Version
-                WHERE Id = @Id;";
+                WHERE Id = @Id {TenantFilter("Groups")};";
+
+            var updateParams = new DynamicParameters();
+            updateParams.Add("Id", id);
+            updateParams.Add("DisplayName", group.DisplayName);
+            updateParams.Add("Description", group.Description);
+            updateParams.Add("Type", group.Type);
+            updateParams.Add("OwnerId", group.Owner != null ? Guid.Parse(group.Owner.Value) : (Guid?)null);
+            updateParams.Add("LastModified", group.Meta.LastModified);
+            updateParams.Add("Version", newVersion);
+            AddTenantParam(updateParams);
 
             using var connection = CreateConnection();
             using var transaction = connection.BeginTransaction();
 
             try
             {
-                await connection.ExecuteAsync(sql, new
-                {
-                    Id = id,
-                    DisplayName = group.DisplayName,
-                    Description = group.Description,
-                    Type = group.Type,
-                    OwnerId = group.Owner != null ? Guid.Parse(group.Owner.Value) : (Guid?)null,
-                    LastModified = group.Meta.LastModified,
-                    Version = newVersion
-                }, transaction);
+                await connection.ExecuteAsync(sql, updateParams, transaction);
 
                 // Update members - delete all and re-insert
                 await connection.ExecuteAsync("DELETE FROM GroupMembers WHERE GroupId = @GroupId",
@@ -278,12 +300,19 @@ namespace SCIMServer.DataAccess.Repositories
         /// <returns>True if deleted, false if not found</returns>
         public async Task<bool> DeleteAsync(Guid id)
         {
-            var sql = @"
+            // The GroupMembers delete is unconditional (no TenantId there) but is gated
+            // by the Groups DELETE which IS tenant-scoped — if no group row matches,
+            // nothing was removed even if we touched orphan rows in GroupMembers.
+            var sql = $@"
                 DELETE FROM GroupMembers WHERE GroupId = @Id;
-                DELETE FROM Groups WHERE Id = @Id;";
+                DELETE FROM Groups WHERE Id = @Id {TenantFilter("Groups")};";
+
+            var p = new DynamicParameters();
+            p.Add("Id", id);
+            AddTenantParam(p);
 
             using var connection = CreateConnection();
-            var affected = await connection.ExecuteAsync(sql, new { Id = id });
+            var affected = await connection.ExecuteAsync(sql, p);
             return affected > 0;
         }
 

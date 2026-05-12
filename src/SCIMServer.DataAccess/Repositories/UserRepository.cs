@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using SCIMServer.Core.Models;
+using SCIMServer.Core.Services;
 
 namespace SCIMServer.DataAccess.Repositories
 {
@@ -13,12 +14,45 @@ namespace SCIMServer.DataAccess.Repositories
     /// </summary>
     public class UserRepository : BaseRepository
     {
+        private readonly ITenantContext? _tenantContext;
+
         /// <summary>
-        /// Initializes a new instance of the UserRepository class
+        /// Initializes a new instance of the UserRepository class.
+        /// When <paramref name="tenantContext"/> is supplied, all queries are scoped
+        /// to the active tenant (UI label "Connected System") unless the caller has
+        /// Admin scope.
         /// </summary>
-        /// <param name="config">Database configuration</param>
-        public UserRepository(DatabaseConfig config) : base(config)
+        public UserRepository(DatabaseConfig config, ITenantContext? tenantContext = null) : base(config)
         {
+            _tenantContext = tenantContext;
+        }
+
+        /// <summary>
+        /// Returns the active scope tenant id, or null if the caller is Admin or no
+        /// context is wired. Repositories use this to gate every query.
+        /// </summary>
+        private Guid? ScopeTenantId => _tenantContext is { IsAdmin: false } ? _tenantContext.TenantId : null;
+
+        /// <summary>
+        /// Tenant id to use when inserting rows. Falls back to the Default tenant
+        /// (matches the v8 migration default) when no context is in scope.
+        /// </summary>
+        private Guid InsertTenantId =>
+            _tenantContext?.TenantId
+            ?? TenantRepository.DefaultTenantId;
+
+        /// <summary>
+        /// Returns " AND alias.TenantId = @_TenantId " when scoping is active, else "".
+        /// </summary>
+        private string TenantFilter(string alias) =>
+            ScopeTenantId.HasValue ? $" AND {alias}.TenantId = @_TenantId " : string.Empty;
+
+        /// <summary>
+        /// Adds the @_TenantId parameter to a DynamicParameters bag when scoping is active.
+        /// </summary>
+        private void AddTenantParam(DynamicParameters p)
+        {
+            if (ScopeTenantId.HasValue) p.Add("_TenantId", ScopeTenantId.Value);
         }
 
         /// <summary>
@@ -28,10 +62,24 @@ namespace SCIMServer.DataAccess.Repositories
         /// <returns>The user if found, null otherwise</returns>
         public async Task<ScimUser?> GetByIdAsync(Guid id)
         {
+            var sql = $@"
+                SELECT * FROM Users WHERE Id = @UserId {TenantFilter("Users")};
+                SELECT * FROM UserEmails WHERE UserId = @UserId;
+                SELECT * FROM UserPhoneNumbers WHERE UserId = @UserId;
+                SELECT * FROM UserAddresses WHERE UserId = @UserId;
+                SELECT g.Id AS Value, g.DisplayName AS Display, 'direct' AS Type
+                  FROM GroupMembers gm
+                  JOIN Groups g ON gm.GroupId = g.Id
+                 WHERE gm.Value = @UserId {TenantFilter("g")};
+                SELECT Value, Display, Type, [Primary] FROM UserRoles WHERE UserId = @UserId;
+                SELECT * FROM CustomAttributeValues WHERE ResourceId = @UserId;";
+
+            var p = new DynamicParameters();
+            p.Add("UserId", id);
+            AddTenantParam(p);
+
             using var connection = CreateConnection();
-            using var multi = await connection.QueryMultipleAsync(
-                "EXEC GetUserById @UserId",
-                new { UserId = id });
+            using var multi = await connection.QueryMultipleAsync(sql, p);
 
             var user = await multi.ReadSingleOrDefaultAsync<dynamic>();
             if (user == null) return null;
@@ -67,14 +115,19 @@ namespace SCIMServer.DataAccess.Repositories
         /// <returns>The user if found, null otherwise</returns>
         public async Task<ScimUser?> GetByUserNameAsync(string userName)
         {
-            var sql = @"
-                SELECT * FROM Users WHERE UserName = @UserName;
-                SELECT * FROM UserEmails WHERE UserId = (SELECT Id FROM Users WHERE UserName = @UserName);
-                SELECT * FROM UserPhoneNumbers WHERE UserId = (SELECT Id FROM Users WHERE UserName = @UserName);
-                SELECT * FROM UserAddresses WHERE UserId = (SELECT Id FROM Users WHERE UserName = @UserName);";
+            var userMatch = $"(SELECT Id FROM Users WHERE UserName = @UserName {TenantFilter("Users")})";
+            var sql = $@"
+                SELECT * FROM Users WHERE UserName = @UserName {TenantFilter("Users")};
+                SELECT * FROM UserEmails WHERE UserId = {userMatch};
+                SELECT * FROM UserPhoneNumbers WHERE UserId = {userMatch};
+                SELECT * FROM UserAddresses WHERE UserId = {userMatch};";
+
+            var p = new DynamicParameters();
+            p.Add("UserName", userName);
+            AddTenantParam(p);
 
             using var connection = CreateConnection();
-            using var multi = await connection.QueryMultipleAsync(sql, new { UserName = userName });
+            using var multi = await connection.QueryMultipleAsync(sql, p);
 
             var user = await multi.ReadSingleOrDefaultAsync<dynamic>();
             if (user == null) return null;
@@ -99,7 +152,7 @@ namespace SCIMServer.DataAccess.Repositories
             string? filterSql = null,
             DynamicParameters? filterParams = null)
         {
-            var whereClause = "WHERE 1=1";
+            var whereClause = "WHERE 1=1" + TenantFilter("u");
             if (!string.IsNullOrWhiteSpace(filterSql))
             {
                 whereClause += $" AND ({filterSql})";
@@ -116,6 +169,7 @@ namespace SCIMServer.DataAccess.Repositories
             var parameters = new DynamicParameters();
             parameters.Add("Skip", options.Skip);
             parameters.Add("Count", options.Count);
+            AddTenantParam(parameters);
             if (filterParams != null)
             {
                 parameters.AddDynamicParams(filterParams);
@@ -213,12 +267,12 @@ namespace SCIMServer.DataAccess.Repositories
 
             var sql = @"
                 INSERT INTO Users (
-                    Id, ExternalId, UserName, Active, Created, LastModified, Version,
+                    Id, TenantId, ExternalId, UserName, Active, Created, LastModified, Version,
                     FormattedName, FamilyName, GivenName, MiddleName, HonorificPrefix, HonorificSuffix,
                     DisplayName, NickName, ProfileUrl, Title, UserType, PreferredLanguage, Locale, Timezone,
                     EmployeeNumber, CostCenter, Organization, Division, Department, ManagerId
                 ) VALUES (
-                    @Id, @ExternalId, @UserName, @Active, @Created, @LastModified, @Version,
+                    @Id, @TenantId, @ExternalId, @UserName, @Active, @Created, @LastModified, @Version,
                     @FormattedName, @FamilyName, @GivenName, @MiddleName, @HonorificPrefix, @HonorificSuffix,
                     @DisplayName, @NickName, @ProfileUrl, @Title, @UserType, @PreferredLanguage, @Locale, @Timezone,
                     @EmployeeNumber, @CostCenter, @Organization, @Division, @Department, @ManagerId
@@ -232,6 +286,7 @@ namespace SCIMServer.DataAccess.Repositories
                 await connection.ExecuteAsync(sql, new
                 {
                     Id = id,
+                    TenantId = InsertTenantId,
                     user.ExternalId,
                     user.UserName,
                     user.Active,
@@ -287,7 +342,7 @@ namespace SCIMServer.DataAccess.Repositories
         {
             user.Meta.LastModified = DateTime.UtcNow;
 
-            var sql = @"
+            var sql = $@"
                 UPDATE Users SET
                     ExternalId = @ExternalId,
                     UserName = @UserName,
@@ -314,42 +369,43 @@ namespace SCIMServer.DataAccess.Repositories
                     Division = @Division,
                     Department = @Department,
                     ManagerId = @ManagerId
-                WHERE Id = @Id;";
+                WHERE Id = @Id {TenantFilter("Users")};";
+
+            var updateParams = new DynamicParameters();
+            updateParams.Add("Id", id);
+            updateParams.Add("ExternalId", user.ExternalId);
+            updateParams.Add("UserName", user.UserName);
+            updateParams.Add("Active", user.Active);
+            updateParams.Add("LastModified", user.Meta.LastModified);
+            updateParams.Add("FormattedName", user.Name?.Formatted);
+            updateParams.Add("FamilyName", user.Name?.FamilyName);
+            updateParams.Add("GivenName", user.Name?.GivenName);
+            updateParams.Add("MiddleName", user.Name?.MiddleName);
+            updateParams.Add("HonorificPrefix", user.Name?.HonorificPrefix);
+            updateParams.Add("HonorificSuffix", user.Name?.HonorificSuffix);
+            updateParams.Add("DisplayName", user.DisplayName);
+            updateParams.Add("NickName", user.NickName);
+            updateParams.Add("ProfileUrl", user.ProfileUrl);
+            updateParams.Add("Title", user.Title);
+            updateParams.Add("UserType", user.UserType);
+            updateParams.Add("PreferredLanguage", user.PreferredLanguage);
+            updateParams.Add("Locale", user.Locale);
+            updateParams.Add("Timezone", user.Timezone);
+            updateParams.Add("EmployeeNumber", user.EnterpriseExtension?.EmployeeNumber);
+            updateParams.Add("CostCenter", user.EnterpriseExtension?.CostCenter);
+            updateParams.Add("Organization", user.EnterpriseExtension?.Organization);
+            updateParams.Add("Division", user.EnterpriseExtension?.Division);
+            updateParams.Add("Department", user.EnterpriseExtension?.Department);
+            updateParams.Add("ManagerId", user.EnterpriseExtension?.Manager?.Value != null
+                ? Guid.Parse(user.EnterpriseExtension.Manager.Value) : (Guid?)null);
+            AddTenantParam(updateParams);
 
             using var connection = CreateConnection();
             using var transaction = connection.BeginTransaction();
 
             try
             {
-                var rowsAffected = await connection.ExecuteAsync(sql, new
-                {
-                    Id = id,
-                    user.ExternalId,
-                    user.UserName,
-                    user.Active,
-                    user.Meta.LastModified,
-                    FormattedName = user.Name?.Formatted,
-                    FamilyName = user.Name?.FamilyName,
-                    GivenName = user.Name?.GivenName,
-                    MiddleName = user.Name?.MiddleName,
-                    HonorificPrefix = user.Name?.HonorificPrefix,
-                    HonorificSuffix = user.Name?.HonorificSuffix,
-                    user.DisplayName,
-                    user.NickName,
-                    user.ProfileUrl,
-                    user.Title,
-                    user.UserType,
-                    user.PreferredLanguage,
-                    user.Locale,
-                    user.Timezone,
-                    EmployeeNumber = user.EnterpriseExtension?.EmployeeNumber,
-                    CostCenter = user.EnterpriseExtension?.CostCenter,
-                    Organization = user.EnterpriseExtension?.Organization,
-                    Division = user.EnterpriseExtension?.Division,
-                    Department = user.EnterpriseExtension?.Department,
-                    ManagerId = user.EnterpriseExtension?.Manager?.Value != null ?
-                        Guid.Parse(user.EnterpriseExtension.Manager.Value) : (Guid?)null
-                }, transaction);
+                var rowsAffected = await connection.ExecuteAsync(sql, updateParams, transaction);
 
                 if (rowsAffected == 0)
                 {
@@ -380,8 +436,11 @@ namespace SCIMServer.DataAccess.Repositories
         /// <returns>True if deleted, false if not found</returns>
         public async Task<bool> DeleteAsync(Guid id)
         {
-            var sql = "DELETE FROM Users WHERE Id = @Id";
-            var rowsAffected = await ExecuteAsync(sql, new { Id = id });
+            var sql = $"DELETE FROM Users WHERE Id = @Id {TenantFilter("Users")}";
+            var p = new DynamicParameters();
+            p.Add("Id", id);
+            AddTenantParam(p);
+            var rowsAffected = await ExecuteAsync(sql, p);
             return rowsAffected > 0;
         }
 

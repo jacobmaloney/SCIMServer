@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using SCIMServer.Core.Services;
 using SCIMServer.DataAccess;
 using SCIMServer.DataAccess.Repositories;
 using SCIMServer.Web.Authentication;
