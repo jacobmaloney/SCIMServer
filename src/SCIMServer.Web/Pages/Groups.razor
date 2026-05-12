@@ -4,6 +4,7 @@
 @using SCIMServer.DataAccess.Repositories
 @inject GroupRepository GroupRepository
 @inject UserRepository UserRepository
+@inject TenantRepository TenantRepo
 @inject NavigationManager Navigation
 
 <PageTitle>Groups - SCIM Server</PageTitle>
@@ -24,6 +25,19 @@
             <button class="btn btn-primary" @onclick="ShowCreateGroupModal">
                 <i class="oi oi-plus"></i> Create Group
             </button>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label class="form-label">Connected System</label>
+            <select class="form-select" @bind="tenantFilterSelection" @bind:after="OnTenantFilterChanged">
+                <option value="">All Connected Systems</option>
+                @foreach (var sys in tenants)
+                {
+                    <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
+                }
+            </select>
         </div>
     </div>
 
@@ -355,10 +369,17 @@
     private string selectedUserToAdd = "";
     private bool memberChangesPresent = false;
 
+    private List<Tenant> tenants = new();
+    private string tenantFilterSelection = "";
+
     protected override async Task OnInitializedAsync()
     {
+        try { tenants = await TenantRepo.GetAllAsync(); }
+        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
         await LoadGroups(1);
     }
+
+    private async Task OnTenantFilterChanged() => await LoadGroups(1);
 
     private async Task LoadGroups(int page)
     {
@@ -373,7 +394,9 @@
                 Count = pageSize
             };
 
-            var (loadedGroups, count) = await GroupRepository.GetAllAsync(options);
+            Guid? override_ = null;
+            if (Guid.TryParse(tenantFilterSelection, out var parsed)) override_ = parsed;
+            var (loadedGroups, count) = await GroupRepository.GetAllAsync(options, tenantIdOverride: override_);
             groups = loadedGroups;
             totalCount = count;
             totalPages = (int)Math.Ceiling((double)totalCount / pageSize);

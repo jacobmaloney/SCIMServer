@@ -42,17 +42,26 @@ namespace SCIMServer.DataAccess.Repositories
             ?? TenantRepository.DefaultTenantId;
 
         /// <summary>
+        /// Effective tenant filter for a query. An explicit <paramref name="overrideId"/>
+        /// (e.g. admin UI selecting "show only this Connected System") wins over the
+        /// context-derived scope; null falls back to the context's scope. Returns null
+        /// when no filter should be applied (admin scope with no override).
+        /// </summary>
+        private Guid? EffectiveTenantId(Guid? overrideId) => overrideId ?? ScopeTenantId;
+
+        /// <summary>
         /// Returns " AND alias.TenantId = @_TenantId " when scoping is active, else "".
         /// </summary>
-        private string TenantFilter(string alias) =>
-            ScopeTenantId.HasValue ? $" AND {alias}.TenantId = @_TenantId " : string.Empty;
+        private string TenantFilter(string alias, Guid? overrideId = null) =>
+            EffectiveTenantId(overrideId).HasValue ? $" AND {alias}.TenantId = @_TenantId " : string.Empty;
 
         /// <summary>
         /// Adds the @_TenantId parameter to a DynamicParameters bag when scoping is active.
         /// </summary>
-        private void AddTenantParam(DynamicParameters p)
+        private void AddTenantParam(DynamicParameters p, Guid? overrideId = null)
         {
-            if (ScopeTenantId.HasValue) p.Add("_TenantId", ScopeTenantId.Value);
+            var id = EffectiveTenantId(overrideId);
+            if (id.HasValue) p.Add("_TenantId", id.Value);
         }
 
         /// <summary>
@@ -150,9 +159,10 @@ namespace SCIMServer.DataAccess.Repositories
         public async Task<(List<ScimUser> Users, int TotalCount)> GetAllAsync(
             ScimQueryOptions options,
             string? filterSql = null,
-            DynamicParameters? filterParams = null)
+            DynamicParameters? filterParams = null,
+            Guid? tenantIdOverride = null)
         {
-            var whereClause = "WHERE 1=1" + TenantFilter("u");
+            var whereClause = "WHERE 1=1" + TenantFilter("u", tenantIdOverride);
             if (!string.IsNullOrWhiteSpace(filterSql))
             {
                 whereClause += $" AND ({filterSql})";
@@ -169,7 +179,7 @@ namespace SCIMServer.DataAccess.Repositories
             var parameters = new DynamicParameters();
             parameters.Add("Skip", options.Skip);
             parameters.Add("Count", options.Count);
-            AddTenantParam(parameters);
+            AddTenantParam(parameters, tenantIdOverride);
             if (filterParams != null)
             {
                 parameters.AddDynamicParams(filterParams);

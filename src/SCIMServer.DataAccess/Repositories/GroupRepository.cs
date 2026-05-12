@@ -29,11 +29,13 @@ namespace SCIMServer.DataAccess.Repositories
 
         private Guid? ScopeTenantId => _tenantContext is { IsAdmin: false } ? _tenantContext.TenantId : null;
         private Guid InsertTenantId => _tenantContext?.TenantId ?? TenantRepository.DefaultTenantId;
-        private string TenantFilter(string alias) =>
-            ScopeTenantId.HasValue ? $" AND {alias}.TenantId = @_TenantId " : string.Empty;
-        private void AddTenantParam(DynamicParameters p)
+        private Guid? EffectiveTenantId(Guid? overrideId) => overrideId ?? ScopeTenantId;
+        private string TenantFilter(string alias, Guid? overrideId = null) =>
+            EffectiveTenantId(overrideId).HasValue ? $" AND {alias}.TenantId = @_TenantId " : string.Empty;
+        private void AddTenantParam(DynamicParameters p, Guid? overrideId = null)
         {
-            if (ScopeTenantId.HasValue) p.Add("_TenantId", ScopeTenantId.Value);
+            var id = EffectiveTenantId(overrideId);
+            if (id.HasValue) p.Add("_TenantId", id.Value);
         }
 
         /// <summary>
@@ -87,9 +89,10 @@ namespace SCIMServer.DataAccess.Repositories
         public async Task<(List<ScimGroup> Groups, int TotalCount)> GetAllAsync(
             ScimQueryOptions options,
             string? filterSql = null,
-            DynamicParameters? filterParams = null)
+            DynamicParameters? filterParams = null,
+            Guid? tenantIdOverride = null)
         {
-            var whereClause = "WHERE 1=1" + TenantFilter("g");
+            var whereClause = "WHERE 1=1" + TenantFilter("g", tenantIdOverride);
             if (!string.IsNullOrWhiteSpace(filterSql))
             {
                 whereClause += $" AND ({filterSql})";
@@ -107,7 +110,7 @@ namespace SCIMServer.DataAccess.Repositories
             var parameters = new DynamicParameters();
             parameters.Add("Offset", options.StartIndex - 1);
             parameters.Add("Limit", options.Count);
-            AddTenantParam(parameters);
+            AddTenantParam(parameters, tenantIdOverride);
             if (filterParams != null)
             {
                 parameters.AddDynamicParams(filterParams);
