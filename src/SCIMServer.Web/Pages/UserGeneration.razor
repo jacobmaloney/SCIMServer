@@ -9,6 +9,7 @@
 @inject UserRepository UserRepository
 @inject GroupRepository GroupRepository
 @inject TenantRepository TenantRepo
+@inject ActiveSystemState ActiveSystem
 @inject GenerationService GenerationService
 @inject NavigationManager Navigation
 
@@ -44,15 +45,18 @@
                         <h5>Basic Settings</h5>
 
                         <div class="mb-3">
-                            <label class="form-label">Target System <span class="text-danger">*</span></label>
-                            <InputSelect class="form-select" @bind-Value="targetSystemSelection">
-                                <option value="">— Select a Connected System —</option>
-                                @foreach (var sys in tenants)
+                            <label class="form-label">Target System</label>
+                            <div class="p-3" style="background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);">
+                                @if (ActiveSystem.ActiveSystem is { } current)
                                 {
-                                    <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
+                                    <ContextLabel />
                                 }
-                            </InputSelect>
-                            <small class="form-text text-muted">The Connected System the generated users will belong to. Required.</small>
+                                else
+                                {
+                                    <span class="text-muted">No Connected System selected. Pick one in the sidebar — you can't generate to "All".</span>
+                                }
+                            </div>
+                            <small class="form-text text-muted">Generated users land in whichever Connected System is active in the sidebar. Change it there.</small>
                         </div>
 
                         <div class="mb-3">
@@ -206,16 +210,19 @@
     private bool populateGroupsWithRandomMembers = true;
     private string? currentGenerationId;
     private Timer? statusCheckTimer;
-    private List<Tenant> tenants = new();
-    private string targetSystemSelection = "";
+    // Generation target is whichever Connected System is active in the sidebar.
+    // We listen for sidebar changes so the disabled/enabled state of Generate
+    // and the target display under the form update without a manual reload.
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
         activePercentage = (int)(options.ActiveUserPercentage * 100);
         CheckForActiveGeneration();
-        try { tenants = await TenantRepo.GetAllAsync(); }
-        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
+        ActiveSystem.OnChangeAsync += HandleActiveChangedAsync;
+        return Task.CompletedTask;
     }
+
+    private Task HandleActiveChangedAsync() => InvokeAsync(StateHasChanged);
 
     private void CheckForActiveGeneration()
     {
@@ -231,12 +238,12 @@
 
     private Task HandleValidSubmit()
     {
-        if (string.IsNullOrEmpty(targetSystemSelection) || !Guid.TryParse(targetSystemSelection, out var tenantId))
+        if (ActiveSystem.ActiveSystem is null)
         {
-            Console.WriteLine("Target System is required.");
+            Console.WriteLine("No Connected System in scope — pick one in the sidebar before generating.");
             return Task.CompletedTask;
         }
-        options.TenantId = tenantId;
+        options.TenantId = ActiveSystem.ActiveSystem.Id;
         isGenerating = true;
 
         try
@@ -304,5 +311,6 @@
     public void Dispose()
     {
         statusCheckTimer?.Dispose();
+        ActiveSystem.OnChangeAsync -= HandleActiveChangedAsync;
     }
 }

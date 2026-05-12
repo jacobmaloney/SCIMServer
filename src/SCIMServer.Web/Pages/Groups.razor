@@ -13,34 +13,23 @@
 <PageTitle>Groups - SCIM Server</PageTitle>
 
 <div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="page-header">
         <div>
             <h1>Groups</h1>
-            <p class="text-muted">Manage SCIM groups and their memberships</p>
+            <p class="lede">
+                <ContextLabel />
+            </p>
         </div>
-        <div>
+        <div class="d-flex gap-2">
             @if (selectedGroups.Any())
             {
-                <button class="btn btn-danger me-2" @onclick="BulkDeleteGroups">
+                <button class="btn btn-danger" @onclick="BulkDeleteGroups">
                     <i class="oi oi-trash"></i> Delete Selected (@selectedGroups.Count)
                 </button>
             }
             <button class="btn btn-primary" @onclick="ShowCreateGroupModal">
                 <i class="oi oi-plus"></i> Create Group
             </button>
-        </div>
-    </div>
-
-    <div class="row mb-3">
-        <div class="col-md-4">
-            <label class="form-label">Connected System</label>
-            <select class="form-select" @bind="tenantFilterSelection" @bind:after="OnTenantFilterChanged">
-                <option value="">All Connected Systems</option>
-                @foreach (var sys in tenants)
-                {
-                    <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
-                }
-            </select>
         </div>
     </div>
 
@@ -387,16 +376,13 @@
     private string selectedUserToAdd = "";
     private bool memberChangesPresent = false;
 
-    private List<Tenant> tenants = new();
-    // Mirrored from the global ActiveSystemState — see Users.razor for the pattern.
-    private string tenantFilterSelection = "";
+    // ActiveSystemState (sidebar switcher) is the only source of truth. The
+    // page-level filter dropdown was removed — see ContextLabel in the page
+    // header for the current selection indicator.
 
     protected override async Task OnInitializedAsync()
     {
         ActiveSystem.OnChangeAsync += HandleActiveSystemChangedAsync;
-        try { tenants = await TenantRepo.GetAllAsync(); }
-        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
-        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
         await LoadGroups(1);
     }
 
@@ -407,27 +393,11 @@
 
     private async Task HandleActiveSystemChangedAsync()
     {
-        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
         await InvokeAsync(async () =>
         {
             await LoadGroups(1);
             StateHasChanged();
         });
-    }
-
-    private async Task OnTenantFilterChanged()
-    {
-        var match = Guid.TryParse(tenantFilterSelection, out var id)
-            ? tenants.FirstOrDefault(t => t.Id == id)
-            : null;
-        if (match?.Id == ActiveSystem.ActiveSystem?.Id)
-        {
-            await LoadGroups(1);
-        }
-        else
-        {
-            await ActiveSystem.SetAsync(match);
-        }
     }
 
     private async Task LoadGroups(int page)

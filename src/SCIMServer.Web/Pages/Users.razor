@@ -13,34 +13,26 @@
 <PageTitle>User Management</PageTitle>
 
 <div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>User Management</h1>
+    <div class="page-header">
         <div>
+            <h1>User Management</h1>
+            <p class="lede">
+                <ContextLabel />
+            </p>
+        </div>
+        <div class="d-flex gap-2">
             @if (selectedUsers.Any())
             {
-                <button class="btn btn-danger me-2" @onclick="BulkDeleteUsers">
+                <button class="btn btn-danger" @onclick="BulkDeleteUsers">
                     <i class="oi oi-trash"></i> Delete Selected (@selectedUsers.Count)
                 </button>
             }
-            <button class="btn btn-warning me-2" @onclick="ShowDataCleanupModal">
+            <button class="btn btn-outline-secondary" @onclick="ShowDataCleanupModal">
                 <i class="oi oi-wrench"></i> Data Cleanup
             </button>
             <button class="btn btn-primary" @onclick="ShowCreateUserModal">
                 <i class="oi oi-plus"></i> Create User
             </button>
-        </div>
-    </div>
-
-    <div class="row mb-3">
-        <div class="col-md-4">
-            <label class="form-label">Connected System</label>
-            <select class="form-select" @bind="tenantFilterSelection" @bind:after="OnTenantFilterChanged">
-                <option value="">All Connected Systems</option>
-                @foreach (var sys in tenants)
-                {
-                    <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
-                }
-            </select>
         </div>
     </div>
 
@@ -612,18 +604,14 @@
         public bool IsOwner { get; set; }
     }
 
-    private List<Tenant> tenants = new();
-    // Page-level dropdown shadows the global active system from ActiveSystemState.
-    // The two stay in sync: dropdown change → set the state; state change → update dropdown.
-    private string tenantFilterSelection = "";
+    // ActiveSystemState (driven by the sidebar switcher) is the only source of
+    // truth for which Connected System we're scoped to. The page-level filter
+    // dropdown was removed — its replacement is the <ContextLabel /> badge in
+    // the page header that shows the active system + a hint when 'All' is set.
 
     protected override async Task OnInitializedAsync()
     {
         ActiveSystem.OnChangeAsync += HandleActiveSystemChangedAsync;
-        try { tenants = await TenantRepo.GetAllAsync(); }
-        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
-        // Initial render reflects whatever the sidebar already has selected.
-        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
         await LoadUsers(1);
     }
 
@@ -634,32 +622,11 @@
 
     private async Task HandleActiveSystemChangedAsync()
     {
-        // Sidebar switcher changed → update the dropdown + reload the list.
-        tenantFilterSelection = ActiveSystem.ActiveSystem?.Id.ToString() ?? "";
         await InvokeAsync(async () =>
         {
             await LoadUsers(1);
             StateHasChanged();
         });
-    }
-
-    private async Task OnTenantFilterChanged()
-    {
-        // Page dropdown change → push into the shared state. The state's OnChange
-        // fires HandleActiveSystemChangedAsync which reloads; do not double-load.
-        var match = Guid.TryParse(tenantFilterSelection, out var id)
-            ? tenants.FirstOrDefault(t => t.Id == id)
-            : null;
-        if (match?.Id == ActiveSystem.ActiveSystem?.Id)
-        {
-            // No actual change (e.g. clicked the same option). Reload anyway in case it's
-            // the first load.
-            await LoadUsers(1);
-        }
-        else
-        {
-            await ActiveSystem.SetAsync(match);
-        }
     }
 
     private async Task LoadUsers(int page)

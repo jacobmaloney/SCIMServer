@@ -7,6 +7,7 @@
 @inject GroupRepository GroupRepository
 @inject UserRepository UserRepository
 @inject TenantRepository TenantRepo
+@inject ActiveSystemState ActiveSystem
 @inject GenerationService GenerationService
 @inject NavigationManager Navigation
 
@@ -56,15 +57,18 @@
                     <h5>Basic Settings</h5>
 
                     <div class="mb-3">
-                        <label class="form-label">Target System <span class="text-danger">*</span></label>
-                        <select class="form-select" @bind="targetSystemSelection">
-                            <option value="">— Select a Connected System —</option>
-                            @foreach (var sys in tenants)
+                        <label class="form-label">Target System</label>
+                        <div class="p-3" style="background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);">
+                            @if (ActiveSystem.ActiveSystem is not null)
                             {
-                                <option value="@sys.Id">@sys.Name @(sys.Domain != null ? $"({sys.Domain})" : "")</option>
+                                <ContextLabel />
                             }
-                        </select>
-                        <small class="form-text text-muted">The Connected System the generated groups will belong to. Required.</small>
+                            else
+                            {
+                                <span class="text-muted">No Connected System selected. Pick one in the sidebar — you can't generate to "All".</span>
+                            }
+                        </div>
+                        <small class="form-text text-muted">Generated groups land in whichever Connected System is active in the sidebar.</small>
                     </div>
 
                     <div class="mb-3">
@@ -172,8 +176,6 @@
     private string? errorMessage;
     private string? currentGenerationId;
     private Timer? statusCheckTimer;
-    private List<Tenant> tenants = new();
-    private string targetSystemSelection = "";
     
     private readonly Random random = new Random();
     
@@ -201,11 +203,12 @@
 
     private async Task GenerateGroups()
     {
-        if (string.IsNullOrEmpty(targetSystemSelection) || !Guid.TryParse(targetSystemSelection, out var tenantId))
+        if (ActiveSystem.ActiveSystem is null)
         {
-            errorMessage = "Target System is required.";
+            errorMessage = "No Connected System in scope — pick one in the sidebar before generating.";
             return;
         }
+        var tenantId = ActiveSystem.ActiveSystem.Id;
 
         isGenerating = true;
         generationComplete = false;
@@ -312,12 +315,14 @@
         generationComplete = false;
     }
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
         CheckForActiveGeneration();
-        try { tenants = await TenantRepo.GetAllAsync(); }
-        catch (Exception ex) { Console.WriteLine($"LoadTenants failed: {ex.Message}"); }
+        ActiveSystem.OnChangeAsync += HandleActiveChangedAsync;
+        return Task.CompletedTask;
     }
+
+    private Task HandleActiveChangedAsync() => InvokeAsync(StateHasChanged);
 
     private void CheckForActiveGeneration()
     {
@@ -360,5 +365,6 @@
     public void Dispose()
     {
         statusCheckTimer?.Dispose();
+        ActiveSystem.OnChangeAsync -= HandleActiveChangedAsync;
     }
 }
