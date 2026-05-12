@@ -67,78 +67,80 @@
     }
     else
     {
-        <div class="card">
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead>
-                            <tr>
-                                <th>
-                                    <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" checked="@allSelected" />
-                                </th>
-                                <th>Display Name</th>
-                                <th>Type</th>
-                                <th>Owner</th>
-                                <th>Members</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var group in groups)
-                            {
-                                <tr>
-                                    <td>
-                                        <input type="checkbox" class="form-check-input" value="@group.Id" 
-                                               checked="@selectedGroups.Contains(group.Id)" 
-                                               @onchange="@(() => ToggleGroupSelection(group.Id))" />
-                                    </td>
-                                    <td>
-                                        <strong>@group.DisplayName</strong>
+        <div class="table-responsive">
+            <table class="utable">
+                <thead>
+                    <tr>
+                        <th class="check-col">
+                            <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" checked="@allSelected" />
+                        </th>
+                        <th>Group</th>
+                        <th>Type</th>
+                        <th>Owner</th>
+                        <th>Members</th>
+                        <th>Created</th>
+                        <th class="act-col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var group in groups)
+                    {
+                        var initials = GroupInitials(group);
+                        <tr class="@(selectedGroups.Contains(group.Id) ? "sel" : "")" @onclick="() => EditGroup(group)">
+                            <td class="check-col" @onclick:stopPropagation="true">
+                                <input type="checkbox" class="form-check-input" value="@group.Id"
+                                       checked="@selectedGroups.Contains(group.Id)"
+                                       @onchange="@(() => ToggleGroupSelection(group.Id))" />
+                            </td>
+                            <td>
+                                <div class="user-cell">
+                                    <span class="avatar avatar-28">@initials</span>
+                                    <div class="user-cell-text">
+                                        <span class="user-cell-name">@group.DisplayName</span>
                                         @if (!string.IsNullOrEmpty(group.Description))
                                         {
-                                            <br />
-                                            <small class="text-muted">@group.Description</small>
+                                            <span class="group-row-desc">@group.Description</span>
                                         }
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-secondary">@(group.Type ?? "Group")</span>
-                                    </td>
-                                    <td>
-                                        @if (!string.IsNullOrEmpty(group.Owner?.Display))
-                                        {
-                                            <span>@group.Owner.Display</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="text-muted">No owner</span>
-                                        }
-                                    </td>
-                                    <td>
-                                        <button class="btn btn-sm btn-link text-decoration-none" @onclick="() => ShowMembersModal(group)">
-                                            <span class="badge bg-info">@group.Members.Count members</span>
-                                        </button>
-                                    </td>
-                                    <td>
-                                        <small>@group.Meta.Created.ToString("MMM dd, yyyy")</small>
-                                    </td>
-                                    <td>
-                                        <button class="btn btn-sm btn-outline-info" @onclick="() => ShowMembersModal(group)" title="Manage Members">
-                                            <i class="oi oi-people"></i>
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditGroup(group)" title="Edit Group">
-                                            <i class="oi oi-pencil"></i>
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteGroup(group)" title="Delete Group">
-                                            <i class="oi oi-trash"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <span class="kind-pill">@(group.Type ?? "Group")</span>
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrEmpty(group.Owner?.Display))
+                                {
+                                    <span style="font-size: 12.5px;">@group.Owner.Display</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted" style="font-size: 12.5px;">No owner</span>
+                                }
+                            </td>
+                            <td @onclick:stopPropagation="true">
+                                <button class="row-act" @onclick="() => ShowMembersModal(group)" title="View members" style="padding: 2px 8px;">
+                                    <span class="member-count">
+                                        <i class="oi oi-people"></i>
+                                        @group.Members.Count
+                                    </span>
+                                </button>
+                            </td>
+                            <td class="mono-date">@group.Meta.Created.ToString("yyyy-MM-dd")</td>
+                            <td class="act-col" @onclick:stopPropagation="true">
+                                <button class="row-act" @onclick="() => ShowMembersModal(group)" title="Manage Members">
+                                    <i class="oi oi-people"></i>
+                                </button>
+                                <button class="row-act" @onclick="() => EditGroup(group)" title="Edit Group">
+                                    <i class="oi oi-pencil"></i>
+                                </button>
+                                <button class="row-act" @onclick="() => DeleteGroup(group)" title="Delete Group">
+                                    <i class="oi oi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         </div>
 
         <!-- Pagination -->
@@ -347,6 +349,19 @@
 }
 
 @code {
+    private static string GroupInitials(ScimGroup g)
+    {
+        var name = g.DisplayName?.Trim();
+        if (string.IsNullOrEmpty(name)) return "?";
+        // Take first letter of each whitespace-separated word up to 2.
+        var parts = name.Split(new[] { ' ', '-', '_', '·' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2)
+            return string.Concat(char.ToUpperInvariant(parts[0][0]), char.ToUpperInvariant(parts[1][0]));
+        var letters = name.Where(char.IsLetterOrDigit).Take(2).ToArray();
+        if (letters.Length == 0) return "?";
+        return new string(letters.Select(char.ToUpperInvariant).ToArray());
+    }
+
     private List<ScimGroup> groups = new();
     private bool loading = true;
     private int currentPage = 1;

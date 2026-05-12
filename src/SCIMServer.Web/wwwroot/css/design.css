@@ -600,3 +600,161 @@ pre code { background: transparent; padding: 0; }
   margin-top: 16px;
   margin-bottom: 8px;
 }
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Phase 3 — Users + Groups table redesign                              */
+/* ──────────────────────────────────────────────────────────────────── */
+
+/* Card-style table — sits inside the page padding, has its own border + radius. */
+.utable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.utable th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-2);
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.utable td {
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line-2);
+  height: var(--row-h);
+  vertical-align: middle;
+}
+.utable tr { cursor: pointer; }
+.utable tbody tr:hover { background: var(--bg-2); }
+.utable tbody tr.sel { background: var(--accent-50); }
+.utable tr:last-child td { border-bottom: 0; }
+.utable .check-col { width: 36px; }
+.utable .act-col { width: 96px; text-align: right; white-space: nowrap; }
+.row-act {
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.row-act:hover { background: var(--bg-3); color: var(--ink); }
+.row-act i { font-size: 12px; }
+
+/* User cell — avatar + name + mono username below */
+.user-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.user-cell-text { display: flex; flex-direction: column; min-width: 0; }
+.user-cell-name {
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-cell-email {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Department · Title stack */
+.dept-cell { display: flex; flex-direction: column; min-width: 0; }
+.dept-cell-dept { font-weight: 500; font-size: 12.5px; color: var(--ink); }
+.dept-cell-title { font-size: 11.5px; color: var(--muted); }
+
+/* Groups cell — small mono pills, with "+N" overflow */
+.groups-cell { display: flex; gap: 4px; flex-wrap: wrap; max-width: 240px; }
+.group-pill {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.group-pill.more { background: transparent; color: var(--muted); }
+
+/* Status pill with leading colored dot */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.status-pill.ok     { background: var(--accent-50); color: var(--accent); }
+.status-pill.muted  { background: var(--bg-2);     color: var(--muted);  }
+.status-pill.warn   { background: rgba(245,158,11,0.12); color: var(--warn); }
+.status-pill::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Group/User detail: mono date column */
+.utable td.mono-date {
+  font-family: var(--font-mono);
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* Groups page row variant — name + description, member count, source */
+.group-row-cell { display: flex; flex-direction: column; min-width: 0; }
+.group-row-name { font-weight: 500; color: var(--ink); }
+.group-row-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+.member-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Pagination — soften the bootstrap look so it fits the table card */
+.utable + nav .pagination { gap: 4px; margin-top: 16px; }
+.utable + nav .page-link {
+  border-radius: var(--radius-sm) !important;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  background: var(--surface);
+  font-size: 12.5px;
+  padding: 5px 10px;
+}
+.utable + nav .page-item.active .page-link {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-on);
+}
+.utable + nav .page-item.disabled .page-link {
+  color: var(--muted-2);
+  background: var(--bg-2);
+}

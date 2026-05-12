@@ -46,7 +46,7 @@
 
     @if (loading)
     {
-        <div class="text-center">
+        <div class="text-center py-5">
             <div class="spinner-border" role="status">
                 <span class="visually-hidden">Loading...</span>
             </div>
@@ -55,61 +55,66 @@
     else
     {
         <div class="table-responsive">
-            <table class="table table-striped">
+            <table class="utable">
                 <thead>
                     <tr>
-                        <th>
+                        <th class="check-col">
                             <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" checked="@allSelected" />
                         </th>
-                        <th>Username</th>
-                        <th>Display Name</th>
-                        <th>Email</th>
-                        <th>Department</th>
-                        <th>Manager</th>
+                        <th>User</th>
+                        <th>Department · Title</th>
                         <th>Status</th>
+                        <th>Manager</th>
                         <th>Created</th>
-                        <th>Groups</th>
-                        <th>Actions</th>
+                        <th class="act-col">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var user in users)
                     {
-                        <tr>
-                            <td>
-                                <input type="checkbox" class="form-check-input" value="@user.Id" 
-                                       checked="@selectedUsers.Contains(user.Id)" 
+                        var initials = InitialsFor(user);
+                        var primaryEmail = user.Emails?.FirstOrDefault(e => e.Primary)?.Value ?? user.UserName;
+                        <tr class="@(selectedUsers.Contains(user.Id) ? "sel" : "")" @onclick="() => EditUser(user)">
+                            <td class="check-col" @onclick:stopPropagation="true">
+                                <input type="checkbox" class="form-check-input" value="@user.Id"
+                                       checked="@selectedUsers.Contains(user.Id)"
                                        @onchange="@(() => ToggleUserSelection(user.Id))" />
                             </td>
-                            <td>@user.UserName</td>
-                            <td>@user.DisplayName</td>
-                            <td>@user.Emails.FirstOrDefault(e => e.Primary)?.Value</td>
-                            <td>@user.EnterpriseExtension?.Department</td>
-                            <td>@user.EnterpriseExtension?.Manager?.DisplayName</td>
+                            <td>
+                                <div class="user-cell">
+                                    <span class="avatar avatar-28">@initials</span>
+                                    <div class="user-cell-text">
+                                        <span class="user-cell-name">@(string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName : user.DisplayName)</span>
+                                        <span class="user-cell-email">@primaryEmail</span>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="dept-cell">
+                                    <span class="dept-cell-dept">@(user.EnterpriseExtension?.Department ?? "—")</span>
+                                    <span class="dept-cell-title">@(user.Title ?? "")</span>
+                                </div>
+                            </td>
                             <td>
                                 @if (user.Active)
                                 {
-                                    <span class="badge bg-success">Active</span>
+                                    <span class="status-pill ok">Active</span>
                                 }
                                 else
                                 {
-                                    <span class="badge bg-danger">Inactive</span>
+                                    <span class="status-pill muted">Suspended</span>
                                 }
                             </td>
-                            <td>@user.Meta.Created.ToString("yyyy-MM-dd")</td>
-                            <td>
-                                <button class="btn btn-sm btn-link text-decoration-none" @onclick="() => ShowUserGroupsModal(user)">
-                                    <i class="oi oi-badge"></i> View Groups
-                                </button>
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-outline-info" @onclick="() => ShowUserGroupsModal(user)" title="Manage Groups">
+                            <td class="text-muted" style="font-size: 12.5px;">@(user.EnterpriseExtension?.Manager?.DisplayName ?? "—")</td>
+                            <td class="mono-date">@user.Meta.Created.ToString("yyyy-MM-dd")</td>
+                            <td class="act-col" @onclick:stopPropagation="true">
+                                <button class="row-act" @onclick="() => ShowUserGroupsModal(user)" title="Manage Groups">
                                     <i class="oi oi-badge"></i>
                                 </button>
-                                <button class="btn btn-sm btn-primary" @onclick="() => EditUser(user)" title="Edit User">
+                                <button class="row-act" @onclick="() => EditUser(user)" title="Edit User">
                                     <i class="oi oi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-danger" @onclick="() => DeleteUser(user)" title="Delete User">
+                                <button class="row-act" @onclick="() => DeleteUser(user)" title="Delete User">
                                     <i class="oi oi-trash"></i>
                                 </button>
                             </td>
@@ -389,6 +394,22 @@
 }
 
 @code {
+    private static string InitialsFor(ScimUser u)
+    {
+        // Prefer first letter of given + family. Fall back to first two letters of
+        // display name, then first two of userName, then "?". Always uppercase.
+        var given = u.Name?.GivenName?.Trim();
+        var family = u.Name?.FamilyName?.Trim();
+        if (!string.IsNullOrEmpty(given) && !string.IsNullOrEmpty(family))
+            return string.Concat(char.ToUpperInvariant(given[0]), char.ToUpperInvariant(family[0]));
+        var src = !string.IsNullOrWhiteSpace(u.DisplayName) ? u.DisplayName!.Trim()
+                : !string.IsNullOrWhiteSpace(u.UserName) ? u.UserName!.Trim()
+                : "?";
+        var letters = src.Where(char.IsLetterOrDigit).Take(2).ToArray();
+        if (letters.Length == 0) return "?";
+        return new string(letters.Select(char.ToUpperInvariant).ToArray());
+    }
+
     private List<ScimUser> users = new();
     private bool loading = true;
     private int currentPage = 1;
