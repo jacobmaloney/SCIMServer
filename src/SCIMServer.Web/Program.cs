@@ -76,6 +76,38 @@ builder.Services.AddAuthentication(options =>
     options.Cookie.Name = "scim.admin";
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Lax;
+    // API callers (SCIM, generic REST, SQL emulator, ARS proxy) get a clean 401
+    // with WWW-Authenticate: Bearer instead of an HTML login redirect. Browser
+    // sessions still get the redirect.
+    options.Events.OnRedirectToLogin = ctx =>
+    {
+        var p = ctx.Request.Path.Value ?? string.Empty;
+        if (p.StartsWith("/scim/", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("/sql/v1/", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("/ars/v1/", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            ctx.Response.Headers["WWW-Authenticate"] = "Bearer";
+            return Task.CompletedTask;
+        }
+        ctx.Response.Redirect(ctx.RedirectUri);
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = ctx =>
+    {
+        var p = ctx.Request.Path.Value ?? string.Empty;
+        if (p.StartsWith("/scim/", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("/sql/v1/", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("/ars/v1/", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        }
+        ctx.Response.Redirect(ctx.RedirectUri);
+        return Task.CompletedTask;
+    };
 })
 .AddJwtBearer(options =>
 {
@@ -115,6 +147,7 @@ builder.Services.AddScoped<LoginService>();
 builder.Services.AddScoped<SCIMServer.Core.Services.UserGenerationService>();
 builder.Services.AddSingleton<ApplicationLogService>();
 builder.Services.AddSingleton<GenerationService>();
+builder.Services.AddSingleton<DataChangeNotifier>();
 builder.Services.AddHostedService<StartupService>();
 
 // CORS is driven by Cors:AllowedOrigins in configuration. If no origins are

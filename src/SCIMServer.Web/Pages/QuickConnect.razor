@@ -1,15 +1,27 @@
 @page "/quick-connect"
 @attribute [Authorize]
+@implements IDisposable
 @using Microsoft.AspNetCore.Hosting
+@using SCIMServer.Web.Services
 @inject IWebHostEnvironment Environment
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
+@inject ActiveSystemState ActiveSystem
 
 <PageTitle>Quick Connect - SCIM Server</PageTitle>
 
 <div class="container-fluid">
     <h1>SCIM Quick Connect</h1>
-    <p class="lead">Connection details and testing information for SCIM 2.0 integration</p>
+    <p class="lead">
+        @if (ActiveSystem.ActiveSystem is { } current)
+        {
+            <span>Examples below target <strong>@current.Name</strong> — URL slug <code>@current.Slug</code>. Switch in the sidebar to point at a different Connected System.</span>
+        }
+        else
+        {
+            <span>Pick a Connected System in the sidebar — the examples below will switch to point at it.</span>
+        }
+    </p>
 
     <div class="row">
         <div class="col-lg-8">
@@ -57,7 +69,7 @@
                         <tbody>
                             <tr>
                                 <td><strong>Users</strong></td>
-                                <td><code>/scim/v2/Users</code></td>
+                                <td><code>@ScimPath()/Users</code></td>
                                 <td>
                                     <span class="badge bg-success">GET</span>
                                     <span class="badge bg-primary">POST</span>
@@ -68,7 +80,7 @@
                             </tr>
                             <tr>
                                 <td><strong>Groups</strong></td>
-                                <td><code>/scim/v2/Groups</code></td>
+                                <td><code>@ScimPath()/Groups</code></td>
                                 <td>
                                     <span class="badge bg-success">GET</span>
                                     <span class="badge bg-primary">POST</span>
@@ -79,22 +91,22 @@
                             </tr>
                             <tr>
                                 <td><strong>Schemas</strong></td>
-                                <td><code>/scim/v2/Schemas</code></td>
+                                <td><code>@ScimPath()/Schemas</code></td>
                                 <td><span class="badge bg-success">GET</span></td>
                             </tr>
                             <tr>
                                 <td><strong>Resource Types</strong></td>
-                                <td><code>/scim/v2/ResourceTypes</code></td>
+                                <td><code>@ScimPath()/ResourceTypes</code></td>
                                 <td><span class="badge bg-success">GET</span></td>
                             </tr>
                             <tr>
                                 <td><strong>Service Provider Config</strong></td>
-                                <td><code>/scim/v2/ServiceProviderConfig</code></td>
+                                <td><code>@ScimPath()/ServiceProviderConfig</code></td>
                                 <td><span class="badge bg-success">GET</span></td>
                             </tr>
                             <tr>
                                 <td><strong>Bulk Operations</strong></td>
-                                <td><code>/scim/v2/Bulk</code></td>
+                                <td><code>@ScimPath()/Bulk</code></td>
                                 <td><span class="badge bg-primary">POST</span></td>
                             </tr>
                         </tbody>
@@ -132,12 +144,12 @@
                     <div class="mt-3">
                         <div style="display: @(exampleTab == "curl" ? "block" : "none");">
                             <h5>Get All Users</h5>
-                            <pre class="bg-light p-3"><code>curl -X GET "@baseUrl/scim/v2/Users" \
+                            <pre class="bg-light p-3"><code>curl -X GET "@baseUrl@ScimPath()/Users" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Accept: application/scim+json"</code></pre>
 
                             <h5>Create User</h5>
-                            <pre class="bg-light p-3"><code>curl -X POST "@baseUrl/scim/v2/Users" \
+                            <pre class="bg-light p-3"><code>curl -X POST "@baseUrl@ScimPath()/Users" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/scim+json" \
   -d '{
@@ -156,7 +168,7 @@
   }'</code></pre>
 
                             <h5>Search Users with Filter</h5>
-                            <pre class="bg-light p-3"><code>curl -X GET "@baseUrl/scim/v2/Users?filter=userName%20eq%20%22john.doe@example.com%22" \
+                            <pre class="bg-light p-3"><code>curl -X GET "@baseUrl@ScimPath()/Users?filter=userName%20eq%20%22john.doe@example.com%22" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Accept: application/scim+json"</code></pre>
                         </div>
@@ -166,7 +178,7 @@
                             <ol>
                                 <li>Create a new request in Postman</li>
                                 <li>Set the request type (GET, POST, etc.)</li>
-                                <li>Enter the URL: <code>@baseUrl/scim/v2/Users</code></li>
+                                <li>Enter the URL: <code>@baseUrl@ScimPath()/Users</code></li>
                                 <li>Go to the <strong>Authorization</strong> tab</li>
                                 <li>Select <strong>Bearer Token</strong> as the type</li>
                                 <li>Enter your API token</li>
@@ -182,7 +194,7 @@
     "Authorization" = "Bearer YOUR_TOKEN"
     "Accept" = "application/scim+json"
 }
-Invoke-RestMethod -Uri "@baseUrl/scim/v2/Users" -Headers $headers -Method Get</code></pre>
+Invoke-RestMethod -Uri "@baseUrl@ScimPath()/Users" -Headers $headers -Method Get</code></pre>
 
                             <h5>Create User</h5>
                             <pre class="bg-light p-3"><code>$headers = @@{
@@ -206,7 +218,7 @@ $body = @@{
     active = $true
 } | ConvertTo-Json -Depth 10
 
-Invoke-RestMethod -Uri "@baseUrl/scim/v2/Users" -Headers $headers -Method Post -Body $body</code></pre>
+Invoke-RestMethod -Uri "@baseUrl@ScimPath()/Users" -Headers $headers -Method Post -Body $body</code></pre>
                         </div>
                     </div>
                 </div>
@@ -365,6 +377,23 @@ Invoke-RestMethod -Uri "@baseUrl/scim/v2/Users" -Headers $headers -Method Post -
         // Get the base URL
         var uri = new Uri(Navigation.Uri);
         baseUrl = $"{uri.Scheme}://{uri.Authority}";
+        ActiveSystem.OnChangeAsync += HandleActiveChangedAsync;
+    }
+
+    private Task HandleActiveChangedAsync() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        ActiveSystem.OnChangeAsync -= HandleActiveChangedAsync;
+    }
+
+    // Returns the SCIM v2 path prefix for the currently active Connected System.
+    // Falls back to the legacy unscoped form when no system is selected, so examples
+    // remain useful before the user picks one in the sidebar.
+    private string ScimPath()
+    {
+        var slug = ActiveSystem.ActiveSystem?.Slug;
+        return string.IsNullOrEmpty(slug) ? "/scim/v2" : $"/scim/v2/t/{slug}";
     }
 
     private async Task TestConnection()

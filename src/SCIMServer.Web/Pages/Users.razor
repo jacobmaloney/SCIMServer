@@ -7,20 +7,18 @@
 @inject GroupRepository GroupRepository
 @inject TenantRepository TenantRepo
 @inject ActiveSystemState ActiveSystem
+@inject DataChangeNotifier DataChange
 @inject IJSRuntime JSRuntime
 @implements IDisposable
 
 <PageTitle>User Management</PageTitle>
 
 <div class="container-fluid">
-    <div class="page-header">
-        <div>
-            <h1>User Management</h1>
-            <p class="lede">
-                <ContextLabel />
-            </p>
-        </div>
-        <div class="d-flex gap-2">
+    <PageHeader Title="User Management"
+                Subtitle="Browse, edit, and provision users in the active Connected System."
+                Count="totalCount > 0 ? totalCount : (int?)null"
+                CountLabel="Total users in this Connected System">
+        <Actions>
             @if (selectedUsers.Any())
             {
                 <button class="btn btn-danger" @onclick="BulkDeleteUsers">
@@ -33,8 +31,8 @@
             <button class="btn btn-primary" @onclick="ShowCreateUserModal">
                 <i class="oi oi-plus"></i> Create User
             </button>
-        </div>
-    </div>
+        </Actions>
+    </PageHeader>
 
     @if (loading)
     {
@@ -294,6 +292,28 @@
                         </div>
                     </div>
 
+                    <div class="mb-3">
+                        <label class="form-label">Manager</label>
+                        <input type="text" class="form-control mb-1" placeholder="Search managers by name or username..."
+                               @bind="managerSearchText" @bind:event="oninput" />
+                        <select class="form-select" size="6" @onchange="OnManagerSelected">
+                            <option value="">— No manager —</option>
+                            @foreach (var candidate in FilteredManagerCandidates())
+                            {
+                                <option value="@candidate.Id" selected="@(editingUser.EnterpriseExtension?.Manager?.Value == candidate.Id)">
+                                    @(candidate.DisplayName ?? candidate.UserName) (@candidate.UserName)
+                                </option>
+                            }
+                        </select>
+                        @if (editingUser.EnterpriseExtension?.Manager?.Value is { Length: > 0 })
+                        {
+                            <small class="form-text text-muted">
+                                Current: <strong>@(editingUser.EnterpriseExtension.Manager.DisplayName ?? editingUser.EnterpriseExtension.Manager.Value)</strong>
+                                <button type="button" class="btn btn-link btn-sm p-0 ms-2" @onclick="ClearManager">clear</button>
+                            </small>
+                        }
+                    </div>
+
                     <div class="form-check mb-3">
                         <input type="checkbox" class="form-check-input" @bind="editingUser.Active" />
                         <label class="form-check-label">Active</label>
@@ -420,7 +440,40 @@
                 <div class="alert alert-warning">
                     <i class="oi oi-warning"></i> <strong>Warning:</strong> These operations cannot be undone. Please be careful.
                 </div>
-                
+
+                <div class="card mb-3" style="border-left: 3px solid var(--accent);">
+                    <div class="card-body">
+                        <h6 class="card-title mb-2">Scope</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="cleanupScope" id="cleanupScopeTenant"
+                                   checked="@(cleanupScope == "tenant")"
+                                   @onchange="@(() => cleanupScope = "tenant")"
+                                   disabled="@(ActiveSystem.ActiveSystem is null || cleanupInProgress)" />
+                            <label class="form-check-label" for="cleanupScopeTenant">
+                                <strong>This Connected System only</strong>
+                                @if (ActiveSystem.ActiveSystem is { } s)
+                                {
+                                    <span class="text-muted"> — @s.Name (<code>@s.Slug</code>)</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted"> — pick one in the sidebar to enable</span>
+                                }
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="cleanupScope" id="cleanupScopeAll"
+                                   checked="@(cleanupScope == "all")"
+                                   @onchange="@(() => cleanupScope = "all")"
+                                   disabled="@cleanupInProgress" />
+                            <label class="form-check-label" for="cleanupScopeAll">
+                                <strong class="text-danger">Entire system</strong>
+                                <span class="text-muted"> — every Connected System in the database</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card mb-3">
                     <div class="card-body">
                         <h6 class="card-title">Clear All Group Memberships</h6>
@@ -496,11 +549,11 @@
 
     private void CloseDrawer() => drawerUser = null;
 
-    private void OpenEditFromDrawer(ScimUser u)
+    private async Task OpenEditFromDrawer(ScimUser u)
     {
         // Drawer is the read view; the existing modal handles edits.
         drawerUser = null;
-        EditUser(u);
+        await EditUser(u);
     }
 
     private static string RawJsonFor(ScimUser u)
@@ -649,9 +702,16 @@
         totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
         loading = false;
+        // Fan out so the sidebar count badge stays in sync. Cheap COUNT-only refresh.
+        await DataChange.NotifyAsync(DataChangeKind.Users);
     }
 
-    private void ShowCreateUserModal()
+    // Manager picker — populated each time the edit modal opens so the candidate set
+    // tracks the active Connected System.
+    private List<ScimUser> managerCandidates = new();
+    private string managerSearchText = "";
+
+    private async Task ShowCreateUserModal()
     {
         editingUser = new ScimUser
         {
@@ -659,21 +719,79 @@
             EnterpriseExtension = new ScimEnterpriseUser()
         };
         primaryEmail = "";
+        await LoadManagerCandidatesAsync(null);
         showUserModal = true;
     }
 
-    private void EditUser(ScimUser user)
+    private async Task EditUser(ScimUser user)
     {
         editingUser = user; // In real app, deep clone
-        
+
         // Ensure required properties are initialized
         if (editingUser.Name == null)
             editingUser.Name = new ScimName();
         if (editingUser.EnterpriseExtension == null)
             editingUser.EnterpriseExtension = new ScimEnterpriseUser();
-            
+
         primaryEmail = user.Emails?.FirstOrDefault(e => e.Primary)?.Value ?? "";
+        await LoadManagerCandidatesAsync(user.Id);
         showUserModal = true;
+    }
+
+    private async Task LoadManagerCandidatesAsync(string? excludeUserId)
+    {
+        managerSearchText = "";
+        try
+        {
+            var (loaded, _) = await UserRepository.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 500 });
+            managerCandidates = loaded
+                .Where(u => excludeUserId == null || u.Id != excludeUserId)
+                .ToList();
+        }
+        catch
+        {
+            managerCandidates = new();
+        }
+    }
+
+    private IEnumerable<ScimUser> FilteredManagerCandidates()
+    {
+        if (string.IsNullOrWhiteSpace(managerSearchText)) return managerCandidates.Take(100);
+        var q = managerSearchText.Trim();
+        return managerCandidates
+            .Where(u =>
+                (u.DisplayName ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (u.UserName ?? "").Contains(q, StringComparison.OrdinalIgnoreCase))
+            .Take(100);
+    }
+
+    private void OnManagerSelected(ChangeEventArgs e)
+    {
+        var v = e.Value?.ToString();
+        if (editingUser.EnterpriseExtension == null)
+            editingUser.EnterpriseExtension = new ScimEnterpriseUser();
+        if (string.IsNullOrEmpty(v))
+        {
+            editingUser.EnterpriseExtension.Manager = null;
+        }
+        else
+        {
+            var picked = managerCandidates.FirstOrDefault(u => u.Id == v);
+            editingUser.EnterpriseExtension.Manager = new ScimManager
+            {
+                Value = v,
+                DisplayName = picked?.DisplayName ?? picked?.UserName
+            };
+        }
+    }
+
+    private void ClearManager()
+    {
+        if (editingUser.EnterpriseExtension != null)
+        {
+            editingUser.EnterpriseExtension.Manager = null;
+        }
     }
 
     private void CloseUserModal()
@@ -908,8 +1026,21 @@
         CloseUserGroupsModal();
     }
     
+    // "tenant" = limit cleanup to the active Connected System; "all" = sweep every system.
+    // Default biases toward the safer scope when a system is selected.
+    private string cleanupScope = "tenant";
+
+    private Guid? CleanupTenantOverride =>
+        cleanupScope == "tenant" ? ActiveSystem.ActiveSystem?.Id : (Guid?)null;
+
+    private string CleanupScopeLabel =>
+        cleanupScope == "tenant"
+            ? (ActiveSystem.ActiveSystem?.Name ?? "(no system selected)")
+            : "ALL Connected Systems";
+
     private void ShowDataCleanupModal()
     {
+        cleanupScope = ActiveSystem.ActiveSystem is null ? "all" : "tenant";
         showDataCleanupModal = true;
     }
     
@@ -922,27 +1053,29 @@
     
     private async Task ClearAllMemberships()
     {
-        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
-            "Are you sure you want to clear all group memberships? This will remove all users from all groups but keep the groups.");
-            
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            $"Clear all group memberships in {CleanupScopeLabel}? Groups stay; users are removed from them.");
+
         if (!confirmed) return;
-        
+
         cleanupInProgress = true;
-        cleanupMessage = "Clearing group memberships...";
+        cleanupMessage = $"Clearing group memberships in {CleanupScopeLabel}...";
         StateHasChanged();
-        
+
         try
         {
-            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
-            
+            var (allGroups, _) = await GroupRepository.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 10000 },
+                tenantIdOverride: CleanupTenantOverride);
+
             foreach (var group in allGroups)
             {
                 group.Members?.Clear();
                 group.Owner = null;
                 await GroupRepository.UpdateAsync(Guid.Parse(group.Id), group);
             }
-            
-            await JSRuntime.InvokeVoidAsync("alert", "All group memberships cleared successfully!");
+
+            await JSRuntime.InvokeVoidAsync("alert", $"Cleared memberships across {allGroups.Count} groups in {CleanupScopeLabel}.");
             CloseDataCleanupModal();
         }
         catch (Exception ex)
@@ -957,25 +1090,27 @@
     
     private async Task DeleteAllGroups()
     {
-        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
-            "Are you sure you want to delete ALL groups? This action cannot be undone.");
-            
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            $"Delete ALL groups in {CleanupScopeLabel}? This cannot be undone.");
+
         if (!confirmed) return;
-        
+
         cleanupInProgress = true;
-        cleanupMessage = "Deleting all groups...";
+        cleanupMessage = $"Deleting groups in {CleanupScopeLabel}...";
         StateHasChanged();
-        
+
         try
         {
-            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
-            
+            var (allGroups, _) = await GroupRepository.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 10000 },
+                tenantIdOverride: CleanupTenantOverride);
+
             foreach (var group in allGroups)
             {
                 await GroupRepository.DeleteAsync(Guid.Parse(group.Id));
             }
-            
-            await JSRuntime.InvokeVoidAsync("alert", $"Deleted {allGroups.Count} groups successfully!");
+
+            await JSRuntime.InvokeVoidAsync("alert", $"Deleted {allGroups.Count} groups from {CleanupScopeLabel}.");
             CloseDataCleanupModal();
         }
         catch (Exception ex)
@@ -990,25 +1125,27 @@
     
     private async Task DeleteAllUsers()
     {
-        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
-            "Are you sure you want to delete ALL users? This action cannot be undone.");
-            
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            $"Delete ALL users in {CleanupScopeLabel}? This cannot be undone.");
+
         if (!confirmed) return;
-        
+
         cleanupInProgress = true;
-        cleanupMessage = "Deleting all users...";
+        cleanupMessage = $"Deleting users in {CleanupScopeLabel}...";
         StateHasChanged();
-        
+
         try
         {
-            var (allUsers, _) = await UserRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
-            
+            var (allUsers, _) = await UserRepository.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 10000 },
+                tenantIdOverride: CleanupTenantOverride);
+
             foreach (var user in allUsers)
             {
                 await UserRepository.DeleteAsync(Guid.Parse(user.Id));
             }
-            
-            await JSRuntime.InvokeVoidAsync("alert", $"Deleted {allUsers.Count} users successfully!");
+
+            await JSRuntime.InvokeVoidAsync("alert", $"Deleted {allUsers.Count} users from {CleanupScopeLabel}.");
             await LoadUsers(1);
             CloseDataCleanupModal();
         }
@@ -1024,32 +1161,36 @@
     
     private async Task CompleteDataReset()
     {
-        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", 
-            "Are you absolutely sure you want to reset ALL data? This will delete all users, groups, and memberships. This action CANNOT be undone.");
-            
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            $"Reset ALL data in {CleanupScopeLabel}? Users, groups, and memberships will be deleted. This CANNOT be undone.");
+
         if (!confirmed) return;
-        
+
         cleanupInProgress = true;
-        cleanupMessage = "Resetting all data...";
+        cleanupMessage = $"Resetting data in {CleanupScopeLabel}...";
         StateHasChanged();
-        
+
         try
         {
             // Delete all users first
-            var (allUsers, _) = await UserRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            var (allUsers, _) = await UserRepository.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 10000 },
+                tenantIdOverride: CleanupTenantOverride);
             foreach (var user in allUsers)
             {
                 await UserRepository.DeleteAsync(Guid.Parse(user.Id));
             }
-            
+
             // Delete all groups
-            var (allGroups, _) = await GroupRepository.GetAllAsync(new ScimQueryOptions { StartIndex = 1, Count = 10000 });
+            var (allGroups, _) = await GroupRepository.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 10000 },
+                tenantIdOverride: CleanupTenantOverride);
             foreach (var group in allGroups)
             {
                 await GroupRepository.DeleteAsync(Guid.Parse(group.Id));
             }
-            
-            await JSRuntime.InvokeVoidAsync("alert", $"Complete data reset successful! Deleted {allUsers.Count} users and {allGroups.Count} groups.");
+
+            await JSRuntime.InvokeVoidAsync("alert", $"Reset complete: deleted {allUsers.Count} users and {allGroups.Count} groups from {CleanupScopeLabel}.");
             await LoadUsers(1);
             CloseDataCleanupModal();
         }

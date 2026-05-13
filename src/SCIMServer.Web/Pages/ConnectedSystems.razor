@@ -223,9 +223,10 @@
                 </div>
                 <div class="modal-body">
                     <p class="text-muted">
-                        POST here from your ARS PowerShell workflows or any external app. The bearer token decides
-                        which Connected System the request lands in — every token below is scoped to
-                        <code>@endpointsFor.Slug</code>.
+                        POST here from your ARS PowerShell workflows or any external app. Two URL forms work —
+                        <strong>slug-scoped</strong> (recommended, URL identifies the Connected System) and
+                        <strong>token-scoped</strong> (legacy, bearer token decides). When you use the slug form,
+                        a token that's scoped to a <em>different</em> system is rejected with 403.
                     </p>
 
                     <div class="section-eyebrow">URLs</div>
@@ -235,33 +236,77 @@
                                 <tr><th style="width: 24%">Surface</th><th>URL</th><th style="width: 16%">Method</th><th style="width: 14%">Scope</th></tr>
                             </thead>
                             <tbody>
+                                @{
+                                    string scimUsersUrl   = $"{baseUrl}/scim/v2/t/{endpointsFor.Slug}/Users";
+                                    string scimGroupsUrl  = $"{baseUrl}/scim/v2/t/{endpointsFor.Slug}/Groups";
+                                    string genericUsers   = $"{baseUrl}/api/v1/users";
+                                    string genericGroups  = $"{baseUrl}/api/v1/groups";
+                                    string sqlAccounts    = $"{baseUrl}/sql/v1/accounts";
+                                }
                                 <tr>
                                     <td><strong>SCIM 2.0 · Users</strong></td>
-                                    <td><code>@baseUrl/scim/v2/Users</code></td>
+                                    <td>
+                                        <span class="url-cell">
+                                            <code>@scimUsersUrl</code>
+                                            <button class="url-copy" title="Copy URL" @onclick="@(() => CopyAsync(scimUsersUrl, "scim-users"))">
+                                                <i class="oi oi-clipboard"></i> @(copiedKey == "scim-users" ? "Copied" : "")
+                                            </button>
+                                        </span>
+                                        <br /><small class="text-muted">Legacy: <code>@baseUrl/scim/v2/Users</code></small>
+                                    </td>
                                     <td class="text-muted">POST / GET / PATCH</td>
-                                    <td><span class="kind-pill">Tenant</span></td>
+                                    <td><span class="kind-pill">Slug + Token</span></td>
                                 </tr>
                                 <tr>
                                     <td><strong>SCIM 2.0 · Groups</strong></td>
-                                    <td><code>@baseUrl/scim/v2/Groups</code></td>
+                                    <td>
+                                        <span class="url-cell">
+                                            <code>@scimGroupsUrl</code>
+                                            <button class="url-copy" title="Copy URL" @onclick="@(() => CopyAsync(scimGroupsUrl, "scim-groups"))">
+                                                <i class="oi oi-clipboard"></i> @(copiedKey == "scim-groups" ? "Copied" : "")
+                                            </button>
+                                        </span>
+                                        <br /><small class="text-muted">Legacy: <code>@baseUrl/scim/v2/Groups</code></small>
+                                    </td>
                                     <td class="text-muted">POST / GET / PATCH</td>
-                                    <td><span class="kind-pill">Tenant</span></td>
+                                    <td><span class="kind-pill">Slug + Token</span></td>
                                 </tr>
                                 <tr>
                                     <td><strong>Generic REST · Users</strong></td>
-                                    <td><code>@baseUrl/api/v1/users</code></td>
+                                    <td>
+                                        <span class="url-cell">
+                                            <code>@genericUsers</code>
+                                            <button class="url-copy" title="Copy URL" @onclick="@(() => CopyAsync(genericUsers, "rest-users"))">
+                                                <i class="oi oi-clipboard"></i> @(copiedKey == "rest-users" ? "Copied" : "")
+                                            </button>
+                                        </span>
+                                    </td>
                                     <td class="text-muted">POST / GET / PATCH / DELETE</td>
                                     <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                                 <tr>
                                     <td><strong>Generic REST · Groups</strong></td>
-                                    <td><code>@baseUrl/api/v1/groups</code></td>
+                                    <td>
+                                        <span class="url-cell">
+                                            <code>@genericGroups</code>
+                                            <button class="url-copy" title="Copy URL" @onclick="@(() => CopyAsync(genericGroups, "rest-groups"))">
+                                                <i class="oi oi-clipboard"></i> @(copiedKey == "rest-groups" ? "Copied" : "")
+                                            </button>
+                                        </span>
+                                    </td>
                                     <td class="text-muted">POST / GET / DELETE</td>
                                     <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
                                 <tr>
                                     <td><strong>SQL emulator</strong></td>
-                                    <td><code>@baseUrl/sql/v1/accounts</code></td>
+                                    <td>
+                                        <span class="url-cell">
+                                            <code>@sqlAccounts</code>
+                                            <button class="url-copy" title="Copy URL" @onclick="@(() => CopyAsync(sqlAccounts, "sql"))">
+                                                <i class="oi oi-clipboard"></i> @(copiedKey == "sql" ? "Copied" : "")
+                                            </button>
+                                        </span>
+                                    </td>
                                     <td class="text-muted">POST / GET / PATCH / DELETE</td>
                                     <td><span class="kind-pill">Tenant</span></td>
                                 </tr>
@@ -300,7 +345,12 @@
                                         <td>
                                             @if (demoRaw != null)
                                             {
-                                                <code>Bearer scim_@demoRaw</code>
+                                                <span class="url-cell">
+                                                    <code>Bearer scim_@demoRaw</code>
+                                                    <button class="url-copy" title="Copy header" @onclick="@(() => CopyAsync($"Bearer scim_{demoRaw}", $"tok-{t.Id}"))">
+                                                        <i class="oi oi-clipboard"></i> @(copiedKey == $"tok-{t.Id}" ? "Copied" : "")
+                                                    </button>
+                                                </span>
                                             }
                                             else
                                             {
@@ -313,14 +363,38 @@
                         </table>
                     }
 
+                    @{
+                        var scimExample = ScimCurlExample();
+                        var genericExample = GenericCurlExample();
+                        var powershellExample = PowershellExample();
+                    }
+
                     <div class="section-eyebrow">Example: create a user via SCIM</div>
-                    <pre class="p-3 mb-2 small" style="white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);"><code>@ScimCurlExample()</code></pre>
+                    <div class="code-block">
+                        <button class="code-copy" title="Copy" @onclick="@(() => CopyAsync(scimExample, "SCIM cURL"))">
+                            <i class="oi oi-clipboard"></i>
+                            <span>@(copiedKey == "SCIM cURL" ? "Copied" : "Copy")</span>
+                        </button>
+                        <pre><code>@scimExample</code></pre>
+                    </div>
 
                     <div class="section-eyebrow">Example: create a user via Generic REST</div>
-                    <pre class="p-3 mb-2 small" style="white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);"><code>@GenericCurlExample()</code></pre>
+                    <div class="code-block">
+                        <button class="code-copy" title="Copy" @onclick="@(() => CopyAsync(genericExample, "Generic cURL"))">
+                            <i class="oi oi-clipboard"></i>
+                            <span>@(copiedKey == "Generic cURL" ? "Copied" : "Copy")</span>
+                        </button>
+                        <pre><code>@genericExample</code></pre>
+                    </div>
 
                     <div class="section-eyebrow">Example: PowerShell <code>Invoke-RestMethod</code> from ARS workflow</div>
-                    <pre class="p-3 mb-0 small" style="white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);"><code>@PowershellExample()</code></pre>
+                    <div class="code-block">
+                        <button class="code-copy" title="Copy" @onclick="@(() => CopyAsync(powershellExample, "PowerShell"))">
+                            <i class="oi oi-clipboard"></i>
+                            <span>@(copiedKey == "PowerShell" ? "Copied" : "Copy")</span>
+                        </button>
+                        <pre><code>@powershellExample</code></pre>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @onclick="CloseEndpoints">Close</button>
@@ -353,6 +427,26 @@
     private TenantStats? endpointsFor;
     private List<SCIMServer.Web.Services.ApiToken> endpointTokens = new();
     private string baseUrl = "";
+
+    // Last-copied key, shown briefly as "Copied" feedback next to that button.
+    private string? copiedKey;
+
+    private async Task CopyAsync(string value, string key)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", value);
+            copiedKey = key;
+            StateHasChanged();
+            await Task.Delay(1200);
+            if (copiedKey == key) copiedKey = null;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Clipboard API can be denied in some embedded contexts — silent best-effort.
+        }
+    }
 
     // Demo seed tokens (name → raw value) — only ones whose raw value is documented.
     // For any other token, raw value is unrecoverable from the hash by design.
@@ -402,7 +496,8 @@
     {
         var bearer = DemoBearer();
         var domain = ExampleDomain();
-        var url = baseUrl + "/scim/v2/Users";
+        var slug = endpointsFor?.Slug ?? "default";
+        var url = baseUrl + "/scim/v2/t/" + slug + "/Users";
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("curl -X POST " + url + " \\");
         sb.AppendLine("  -H \"Authorization: Bearer " + bearer + "\" \\");
@@ -440,7 +535,8 @@
     {
         var bearer = DemoBearer();
         var domain = ExampleDomain();
-        var url = baseUrl + "/scim/v2/Users";
+        var slug = endpointsFor?.Slug ?? "default";
+        var url = baseUrl + "/scim/v2/t/" + slug + "/Users";
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("$headers = @{");
         sb.AppendLine("    'Authorization' = 'Bearer " + bearer + "'");

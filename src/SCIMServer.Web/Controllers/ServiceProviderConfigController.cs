@@ -10,6 +10,7 @@ namespace SCIMServer.Web.Controllers
     [AllowAnonymous]
     [Produces("application/scim+json")]
     [Route("scim/v2/ServiceProviderConfig")]
+    [Route("scim/v2/t/{slug}/ServiceProviderConfig")]
     public class ServiceProviderConfigController : ControllerBase
     {
         [HttpGet]

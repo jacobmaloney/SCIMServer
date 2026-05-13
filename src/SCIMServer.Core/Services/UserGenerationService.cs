@@ -15,14 +15,29 @@ namespace SCIMServer.Core.Services
         private CompanyStructure _companyStructure = null!;
         private int _employeeCounter;
 
+        // Reservation sets for the current generation run. Both are seeded with whatever
+        // the caller passes in (typically the live tenant's existing usernames/emails),
+        // then every GenerateUsername / GenerateEmail call appends a numeric suffix until
+        // it finds a free slot — guaranteeing no in-run or cross-run collisions.
+        private HashSet<string> _usedUsernames = new(StringComparer.OrdinalIgnoreCase);
+        private HashSet<string> _usedEmails = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>
-        /// Generates users based on the provided options
+        /// Generates users based on the provided options. Pass <paramref name="existingUsernames"/>
+        /// and <paramref name="existingEmails"/> from the live tenant so the generator avoids
+        /// re-using names that already exist in the database.
         /// </summary>
-        public UserGenerationResult GenerateUsers(UserGenerationOptions options)
+        public UserGenerationResult GenerateUsers(
+            UserGenerationOptions options,
+            IEnumerable<string>? existingUsernames = null,
+            IEnumerable<string>? existingEmails = null)
         {
             // Initialize random with seed if provided
             _random = options.RandomSeed.HasValue ? new Random(options.RandomSeed.Value) : new Random();
             _employeeCounter = 1000;
+
+            _usedUsernames = new HashSet<string>(existingUsernames ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            _usedEmails    = new HashSet<string>(existingEmails    ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
             // Get company structure
             _companyStructure = GetCompanyStructure(options);
@@ -210,32 +225,37 @@ namespace SCIMServer.Core.Services
         }
 
         /// <summary>
-        /// Generates a username
+        /// Generates a username that has not yet been used in this run AND that doesn't
+        /// already exist in the target tenant (when the caller seeded _usedUsernames).
+        /// Suffixes <c>1, 2, 3…</c> until a free slot is found.
         /// </summary>
         private string GenerateUsername(string firstName, string lastName)
         {
             var baseUsername = $"{firstName.ToLower()}.{lastName.ToLower()}";
-            var username = baseUsername;
+            var candidate = baseUsername;
             var counter = 1;
-
-            // In a real implementation, you'd check for duplicates
-            // For now, add a random number if needed
-            if (_random.Next(10) > 7)
+            while (!_usedUsernames.Add(candidate))
             {
-                username = $"{baseUsername}{counter}";
+                candidate = $"{baseUsername}{counter++}";
             }
-
-            return username;
+            return candidate;
         }
 
         /// <summary>
-        /// Generates an email address
+        /// Generates an email address that hasn't been used in this run AND isn't already
+        /// in the tenant. Walks numeric suffixes on the local-part if the base is taken.
         /// </summary>
         private string GenerateEmail(string firstName, string lastName)
         {
             var domain = UserGenerationData.EmailDomains[_random.Next(UserGenerationData.EmailDomains.Length)];
-            var localPart = GenerateUsername(firstName, lastName);
-            return $"{localPart}@{domain}";
+            var baseLocal = $"{firstName.ToLower()}.{lastName.ToLower()}";
+            var candidate = $"{baseLocal}@{domain}";
+            var counter = 1;
+            while (!_usedEmails.Add(candidate))
+            {
+                candidate = $"{baseLocal}{counter++}@{domain}";
+            }
+            return candidate;
         }
 
         /// <summary>

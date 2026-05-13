@@ -341,7 +341,7 @@ namespace SCIMServer.DataAccess.Repositories
                     ResourceType = "Group",
                     Created = record.Created,
                     LastModified = record.LastModified,
-                    Version = record.Version,
+                    Version = record.Version?.ToString(),
                     Location = $"/scim/v2/Groups/{record.Id}"
                 }
             };

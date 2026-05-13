@@ -11,6 +11,7 @@ namespace SCIMServer.Web.Controllers
     [AllowAnonymous]
     [Produces("application/scim+json")]
     [Route("scim/v2/ResourceTypes")]
+    [Route("scim/v2/t/{slug}/ResourceTypes")]
     public class ResourceTypesController : ControllerBase
     {
         [HttpGet]

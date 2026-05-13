@@ -7,20 +7,18 @@
 @inject UserRepository UserRepository
 @inject TenantRepository TenantRepo
 @inject ActiveSystemState ActiveSystem
+@inject DataChangeNotifier DataChange
 @inject NavigationManager Navigation
 @implements IDisposable
 
 <PageTitle>Groups - SCIM Server</PageTitle>
 
 <div class="container-fluid">
-    <div class="page-header">
-        <div>
-            <h1>Groups</h1>
-            <p class="lede">
-                <ContextLabel />
-            </p>
-        </div>
-        <div class="d-flex gap-2">
+    <PageHeader Title="Groups"
+                Subtitle="Manage groups and memberships in the active Connected System."
+                Count="totalCount > 0 ? totalCount : (int?)null"
+                CountLabel="Total groups in this Connected System">
+        <Actions>
             @if (selectedGroups.Any())
             {
                 <button class="btn btn-danger" @onclick="BulkDeleteGroups">
@@ -30,8 +28,8 @@
             <button class="btn btn-primary" @onclick="ShowCreateGroupModal">
                 <i class="oi oi-plus"></i> Create Group
             </button>
-        </div>
-    </div>
+        </Actions>
+    </PageHeader>
 
     @if (loading)
     {
@@ -423,6 +421,7 @@
         {
             loading = false;
         }
+        await DataChange.NotifyAsync(DataChangeKind.Groups);
     }
 
     private void ShowCreateGroupModal()

@@ -11,6 +11,7 @@ namespace SCIMServer.Web.Controllers
     [AllowAnonymous]
     [Produces("application/scim+json")]
     [Route("scim/v2/Schemas")]
+    [Route("scim/v2/t/{slug}/Schemas")]
     public class SchemasController : ControllerBase
     {
         private const string UserSchemaId = "urn:ietf:params:scim:schemas:core:2.0:User";

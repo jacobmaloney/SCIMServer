@@ -14,6 +14,7 @@ namespace SCIMServer.Web.Controllers
     /// SCIM Groups endpoint controller
     /// </summary>
     [Route("scim/v2/[controller]")]
+    [Route("scim/v2/t/{slug}/[controller]")]
     public class GroupsController : BaseScimController
     {
         private readonly GroupRepository _groupRepository;
@@ -72,7 +73,7 @@ namespace SCIMServer.Web.Controllers
             var baseUrl = GetBaseUrl();
             foreach (var group in groups)
             {
-                group.Meta.Location = $"{baseUrl}/scim/v2/Groups/{group.Id}";
+                group.Meta.Location = $"{baseUrl}{ScimPrefix()}/Groups/{group.Id}";
             }
 
             return Ok(response);
@@ -95,7 +96,7 @@ namespace SCIMServer.Web.Controllers
                 return ScimNotFound("Group", id);
             }
 
-            group.Meta.Location = $"{GetBaseUrl()}/scim/v2/Groups/{group.Id}";
+            group.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Groups/{group.Id}";
             return Ok(group);
         }
 
@@ -118,7 +119,7 @@ namespace SCIMServer.Web.Controllers
             try
             {
                 var createdGroup = await _groupRepository.CreateAsync(group);
-                createdGroup.Meta.Location = $"{GetBaseUrl()}/scim/v2/Groups/{createdGroup.Id}";
+                createdGroup.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Groups/{createdGroup.Id}";
 
                 SetLocationHeader("Groups", createdGroup.Id);
                 return Created(createdGroup.Meta.Location, createdGroup);
@@ -159,7 +160,7 @@ namespace SCIMServer.Web.Controllers
                 }
 
                 var updatedGroup = await _groupRepository.UpdateAsync(groupId, group);
-                updatedGroup.Meta.Location = $"{GetBaseUrl()}/scim/v2/Groups/{updatedGroup.Id}";
+                updatedGroup.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Groups/{updatedGroup.Id}";
                 return Ok(updatedGroup);
             }
             catch (Exception ex)
@@ -198,7 +199,7 @@ namespace SCIMServer.Web.Controllers
                 }
 
                 var updatedGroup = await _groupRepository.UpdateAsync(groupId, group);
-                updatedGroup.Meta.Location = $"{GetBaseUrl()}/scim/v2/Groups/{updatedGroup.Id}";
+                updatedGroup.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Groups/{updatedGroup.Id}";
                 return Ok(updatedGroup);
             }
             catch (Exception ex)

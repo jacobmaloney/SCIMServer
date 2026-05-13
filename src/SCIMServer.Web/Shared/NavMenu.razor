@@ -1,8 +1,12 @@
 @using SCIMServer.Core.Models
+@using SCIMServer.Core.Services
 @using SCIMServer.DataAccess.Repositories
 @using SCIMServer.Web.Services
 @inject TenantRepository TenantRepo
+@inject UserRepository UserRepo
+@inject GroupRepository GroupRepo
 @inject ActiveSystemState ActiveSystem
+@inject DataChangeNotifier DataChange
 @inject NavigationManager NavigationManager
 @implements IDisposable
 
@@ -74,10 +78,18 @@
             <NavLink class="nav-item" href="users">
                 <i class="oi oi-people"></i>
                 <span>Users</span>
+                @if (userCount is { } uc)
+                {
+                    <span class="nav-count" title="@CountTooltip">@uc.ToString("N0")</span>
+                }
             </NavLink>
             <NavLink class="nav-item" href="groups">
                 <i class="oi oi-badge"></i>
                 <span>Groups</span>
+                @if (groupCount is { } gc)
+                {
+                    <span class="nav-count" title="@CountTooltip">@gc.ToString("N0")</span>
+                }
             </NavLink>
         </div>
         
@@ -346,6 +358,25 @@
         width: 1.5rem;
         text-align: center;
     }
+
+    /* Count badge on Users / Groups items — neutral by default, brightens when active */
+    .nav-item .nav-count {
+        margin-left: auto;
+        background: rgba(0, 0, 0, 0.06);
+        color: var(--secondary-color, #6b7280);
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 1px 7px;
+        border-radius: 10px;
+        line-height: 1.4;
+        min-width: 22px;
+        text-align: center;
+    }
+    .nav-item.active .nav-count {
+        background: rgba(255, 255, 255, 0.25);
+        color: #fff;
+    }
     
     .nav-footer {
         padding: 1.5rem;
@@ -384,10 +415,23 @@
     // ActiveSystemState service so the Users / Groups pages can read it.
     private bool switcherOpen;
     private List<Tenant> tenants = new();
+    private int? userCount;
+    private int? groupCount;
+
+    private string CountTooltip => ActiveSystem.ActiveSystem is { } s
+        ? $"Total in {s.Name}"
+        : "Total across all Connected Systems";
 
     protected override void OnInitialized()
     {
         ActiveSystem.OnChangeAsync += HandleActiveChangedAsync;
+        DataChange.OnChangedAsync += HandleDataChangedAsync;
+    }
+
+    private async Task HandleDataChangedAsync(DataChangeKind kind)
+    {
+        await LoadCountsAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -396,6 +440,7 @@
         try
         {
             tenants = await TenantRepo.GetAllAsync();
+            await LoadCountsAsync();
             StateHasChanged();
         }
         catch (Exception ex)
@@ -409,9 +454,36 @@
     public void Dispose()
     {
         ActiveSystem.OnChangeAsync -= HandleActiveChangedAsync;
+        DataChange.OnChangedAsync -= HandleDataChangedAsync;
     }
 
-    private Task HandleActiveChangedAsync() => InvokeAsync(StateHasChanged);
+    private async Task HandleActiveChangedAsync()
+    {
+        await LoadCountsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Fetches a count-only page (Count=1 keeps the SELECT cheap, totalCount comes
+    // from the COUNT(*) in the same multi-result query). Scope honors the sidebar
+    // selection so the badges reflect "this connector".
+    private async Task LoadCountsAsync()
+    {
+        try
+        {
+            var scope = ActiveSystem.ActiveSystem?.Id;
+            var (_, uTotal) = await UserRepo.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 1 }, tenantIdOverride: scope);
+            var (_, gTotal) = await GroupRepo.GetAllAsync(
+                new ScimQueryOptions { StartIndex = 1, Count = 1 }, tenantIdOverride: scope);
+            userCount = uTotal;
+            groupCount = gTotal;
+        }
+        catch
+        {
+            userCount = null;
+            groupCount = null;
+        }
+    }
 
     private void ToggleSwitcher() => switcherOpen = !switcherOpen;
     private void CloseSwitcher() => switcherOpen = false;

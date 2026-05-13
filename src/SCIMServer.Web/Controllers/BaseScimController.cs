@@ -95,13 +95,28 @@ namespace SCIMServer.Web.Controllers
         }
 
         /// <summary>
+        /// Returns the SCIM v2 path prefix for this request. When the route includes
+        /// a tenant slug (e.g. /scim/v2/t/acme/Users), the slug segment is preserved
+        /// so that Meta.Location and Location headers round-trip correctly back to
+        /// the same connection.
+        /// </summary>
+        protected string ScimPrefix()
+        {
+            if (RouteData.Values.TryGetValue("slug", out var slugObj) && slugObj is string slug && !string.IsNullOrEmpty(slug))
+            {
+                return $"/scim/v2/t/{slug}";
+            }
+            return "/scim/v2";
+        }
+
+        /// <summary>
         /// Sets the location header for a created resource
         /// </summary>
         /// <param name="resourceType">The resource type</param>
         /// <param name="id">The resource ID</param>
         protected void SetLocationHeader(string resourceType, string id)
         {
-            var location = $"{GetBaseUrl()}/scim/v2/{resourceType}/{id}";
+            var location = $"{GetBaseUrl()}{ScimPrefix()}/{resourceType}/{id}";
             Response.Headers.Append("Location", location);
         }
     }

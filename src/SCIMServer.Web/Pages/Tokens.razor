@@ -11,15 +11,13 @@
 <PageTitle>API Tokens - SCIM Server</PageTitle>
 
 <div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h1>API Tokens</h1>
-            <p class="text-muted">Manage authentication tokens for API access</p>
-        </div>
-        <button class="btn btn-primary" @onclick="ShowCreateTokenModal">
-            <i class="oi oi-plus"></i> Create Token
-        </button>
-    </div>
+    <PageHeader Title="API Tokens" Subtitle="Manage bearer tokens used by external apps to call the SCIM and Generic REST endpoints.">
+        <Actions>
+            <button class="btn btn-primary" @onclick="ShowCreateTokenModal">
+                <i class="oi oi-plus"></i> Create Token
+            </button>
+        </Actions>
+    </PageHeader>
 
     <div class="alert alert-warning">
         <i class="oi oi-warning"></i> <strong>Security Notice:</strong> Treat API tokens like passwords. Never share them or commit them to source control.

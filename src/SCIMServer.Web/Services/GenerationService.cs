@@ -119,9 +119,30 @@ namespace SCIMServer.Web.Services
                 var userRepository = scope.ServiceProvider.GetRequiredService<UserRepository>();
                 var groupRepository = scope.ServiceProvider.GetRequiredService<GroupRepository>();
                 
+                // Pre-load the tenant's existing usernames/emails so the generator avoids
+                // creating duplicates on re-runs (SCIM POST rejects with 409 uniqueness).
+                var existingUsernames = new List<string>();
+                var existingEmails = new List<string>();
+                try
+                {
+                    var (existing, _) = await userRepository.GetAllAsync(
+                        new ScimQueryOptions { StartIndex = 1, Count = 100000 },
+                        tenantIdOverride: options.TenantId);
+                    existingUsernames = existing.Select(u => u.UserName).Where(n => !string.IsNullOrEmpty(n)).ToList()!;
+                    existingEmails = existing
+                        .SelectMany(u => u.Emails ?? new List<SCIMServer.Core.Models.ScimEmail>())
+                        .Select(e => e.Value)
+                        .Where(v => !string.IsNullOrEmpty(v))
+                        .ToList()!;
+                }
+                catch (Exception ex)
+                {
+                    status.Errors.Add($"Could not pre-load existing usernames (continuing without dedupe): {ex.Message}");
+                }
+
                 // Generate users
-                var result = _userGenerationService.GenerateUsers(options);
-                
+                var result = _userGenerationService.GenerateUsers(options, existingUsernames, existingEmails);
+
                 // Save users to database
                 var userIdMapping = new Dictionary<string, string>();
                 
@@ -172,6 +193,28 @@ namespace SCIMServer.Web.Services
                     }
                 }
                 
+                // Second pass: persist manager hierarchy. The generator wires up ManagerId
+                // using its own temp string IDs; map them through userIdMapping to the real
+                // persisted GUIDs and PATCH each user with its real manager.
+                foreach (var genUser in result.Users.Where(u => !string.IsNullOrEmpty(u.ManagerId)))
+                {
+                    if (!userIdMapping.TryGetValue(genUser.Id, out var persistedId)) continue;
+                    if (!userIdMapping.TryGetValue(genUser.ManagerId!, out var persistedManagerId)) continue;
+
+                    try
+                    {
+                        var existing = await userRepository.GetByIdAsync(Guid.Parse(persistedId));
+                        if (existing is null) continue;
+                        existing.EnterpriseExtension ??= new ScimEnterpriseUser();
+                        existing.EnterpriseExtension.Manager = new ScimManager { Value = persistedManagerId };
+                        await userRepository.UpdateAsync(Guid.Parse(persistedId), existing);
+                    }
+                    catch (Exception ex)
+                    {
+                        status.Errors.Add($"Error setting manager for {genUser.UserName}: {ex.Message}");
+                    }
+                }
+
                 // Save groups if any were generated
                 foreach (var genGroup in result.Groups)
                 {
@@ -196,6 +239,7 @@ namespace SCIMServer.Web.Services
                 status.Status = "Completed";
                 status.EndTime = DateTime.UtcNow;
                 status.Message = $"Successfully generated {status.CompletedItems} users";
+                await scope.ServiceProvider.GetRequiredService<DataChangeNotifier>().NotifyAsync(DataChangeKind.Both);
             }
             catch (Exception ex)
             {
@@ -205,7 +249,7 @@ namespace SCIMServer.Web.Services
                 status.Errors.Add(ex.ToString());
             }
         }
-        
+
         private async Task GenerateGroupsAsync(string generationId, int numberOfGroups, GroupGenerationOptions options)
         {
             var status = _activeGenerations[generationId];
@@ -305,6 +349,7 @@ namespace SCIMServer.Web.Services
                 status.EndTime = DateTime.UtcNow;
                 status.Message = $"Successfully generated {status.CompletedItems} groups";
                 await _logger.LogInfoAsync("GroupGeneration", status.Message);
+                await scope.ServiceProvider.GetRequiredService<DataChangeNotifier>().NotifyAsync(DataChangeKind.Groups);
             }
             catch (Exception ex)
             {

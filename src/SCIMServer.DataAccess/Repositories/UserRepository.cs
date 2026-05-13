@@ -114,6 +114,8 @@ namespace SCIMServer.DataAccess.Repositories
             var customAttrs = await multi.ReadAsync<dynamic>();
             // Process custom attributes based on schema
 
+            await ResolveManagerDisplayNamesAsync(connection, new List<ScimUser> { scimUser });
+
             return scimUser;
         }
 
@@ -191,16 +193,48 @@ namespace SCIMServer.DataAccess.Repositories
             var totalCount = await multi.ReadSingleAsync<int>();
             var users = await multi.ReadAsync<dynamic>();
 
-            var scimUsers = users.Select(MapToScimUser).ToList();
+            var scimUsers = users.Select(u => (ScimUser)MapToScimUser(u)).ToList();
 
             // Batch-load related data instead of N+1 queries
             if (scimUsers.Count > 0)
             {
                 var userIds = scimUsers.Select(u => Guid.Parse(u.Id)).ToList();
                 await BatchLoadRelatedDataAsync(connection, scimUsers, userIds);
+                await ResolveManagerDisplayNamesAsync(connection, scimUsers);
             }
 
             return (scimUsers, totalCount);
+        }
+
+        /// <summary>
+        /// Walks the mapped users, collects unique manager Ids, and patches DisplayName
+        /// onto each Manager reference in a single round-trip.
+        /// </summary>
+        private static async Task ResolveManagerDisplayNamesAsync(IDbConnection connection, List<ScimUser> users)
+        {
+            var managerIds = users
+                .Where(u => u.EnterpriseExtension?.Manager?.Value is { } v && Guid.TryParse(v, out _))
+                .Select(u => Guid.Parse(u.EnterpriseExtension!.Manager!.Value!))
+                .Distinct()
+                .ToList();
+
+            if (managerIds.Count == 0) return;
+
+            var rows = await connection.QueryAsync<(Guid Id, string? DisplayName, string UserName)>(
+                "SELECT Id, DisplayName, UserName FROM Users WHERE Id IN @Ids",
+                new { Ids = managerIds });
+            var byId = rows.ToDictionary(r => r.Id, r => r);
+
+            foreach (var u in users)
+            {
+                var mgr = u.EnterpriseExtension?.Manager;
+                if (mgr?.Value is null) continue;
+                if (!Guid.TryParse(mgr.Value, out var mid)) continue;
+                if (byId.TryGetValue(mid, out var row))
+                {
+                    mgr.DisplayName = !string.IsNullOrWhiteSpace(row.DisplayName) ? row.DisplayName : row.UserName;
+                }
+            }
         }
 
         /// <summary>
@@ -451,12 +485,46 @@ namespace SCIMServer.DataAccess.Repositories
         /// <returns>True if deleted, false if not found</returns>
         public async Task<bool> DeleteAsync(Guid id)
         {
-            var sql = $"DELETE FROM Users WHERE Id = @Id {TenantFilter("Users")}";
+            // Foreign-key cleanup so the DELETE doesn't trip FK_Groups_Owner / Users.ManagerId
+            // self-FK / GroupMembers.Value. Wrapped in a transaction so a mid-step failure
+            // doesn't leave the row partially detached.
             var p = new DynamicParameters();
             p.Add("Id", id);
             AddTenantParam(p);
-            var rowsAffected = await ExecuteAsync(sql, p);
-            return rowsAffected > 0;
+
+            using var connection = CreateConnection();
+            connection.Open();
+            using var tx = connection.BeginTransaction();
+            try
+            {
+                // 1. Drop group memberships where this user was a member.
+                await connection.ExecuteAsync(
+                    "DELETE FROM GroupMembers WHERE Value = @Id",
+                    p, tx);
+
+                // 2. Clear group ownership pointing at this user.
+                await connection.ExecuteAsync(
+                    "UPDATE Groups SET OwnerId = NULL WHERE OwnerId = @Id",
+                    p, tx);
+
+                // 3. Clear manager pointers on other users that reported to this one.
+                await connection.ExecuteAsync(
+                    "UPDATE Users SET ManagerId = NULL WHERE ManagerId = @Id",
+                    p, tx);
+
+                // 4. Now safe to delete the user.
+                var rowsAffected = await connection.ExecuteAsync(
+                    $"DELETE FROM Users WHERE Id = @Id {TenantFilter("Users")}",
+                    p, tx);
+
+                tx.Commit();
+                return rowsAffected > 0;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
 
         /// <summary>
@@ -497,7 +565,8 @@ namespace SCIMServer.DataAccess.Repositories
                 };
             }
 
-            if (user.EmployeeNumber != null || user.Department != null)
+            if (user.EmployeeNumber != null || user.Department != null || user.ManagerId != null
+                || user.CostCenter != null || user.Organization != null || user.Division != null)
             {
                 scimUser.EnterpriseExtension = new ScimEnterpriseUser
                 {
@@ -510,6 +579,7 @@ namespace SCIMServer.DataAccess.Repositories
 
                 if (user.ManagerId != null)
                 {
+                    // DisplayName is filled in by ResolveManagerDisplayNamesAsync after batch mapping.
                     scimUser.EnterpriseExtension.Manager = new ScimManager
                     {
                         Value = user.ManagerId.ToString()

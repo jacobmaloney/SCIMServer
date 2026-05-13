@@ -15,6 +15,7 @@ namespace SCIMServer.Web.Controllers
     /// SCIM Users endpoint controller
     /// </summary>
     [Route("scim/v2/[controller]")]
+    [Route("scim/v2/t/{slug}/[controller]")]
     public class UsersController : BaseScimController
     {
         private readonly UserRepository _userRepository;
@@ -81,7 +82,7 @@ namespace SCIMServer.Web.Controllers
             var baseUrl = GetBaseUrl();
             foreach (var user in users)
             {
-                user.Meta.Location = $"{baseUrl}/scim/v2/Users/{user.Id}";
+                user.Meta.Location = $"{baseUrl}{ScimPrefix()}/Users/{user.Id}";
             }
 
             return Ok(response);
@@ -104,7 +105,7 @@ namespace SCIMServer.Web.Controllers
                 return ScimNotFound("User", id);
             }
 
-            user.Meta.Location = $"{GetBaseUrl()}/scim/v2/Users/{user.Id}";
+            user.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Users/{user.Id}";
             return Ok(user);
         }
 
@@ -134,7 +135,7 @@ namespace SCIMServer.Web.Controllers
             try
             {
                 var createdUser = await _userRepository.CreateAsync(user);
-                createdUser.Meta.Location = $"{GetBaseUrl()}/scim/v2/Users/{createdUser.Id}";
+                createdUser.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Users/{createdUser.Id}";
 
                 SetLocationHeader("Users", createdUser.Id);
                 return Created(createdUser.Meta.Location, createdUser);
@@ -181,7 +182,7 @@ namespace SCIMServer.Web.Controllers
                     return ScimNotFound("User", id);
                 }
 
-                updatedUser.Meta.Location = $"{GetBaseUrl()}/scim/v2/Users/{updatedUser.Id}";
+                updatedUser.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Users/{updatedUser.Id}";
                 return Ok(updatedUser);
             }
             catch (Exception ex)
@@ -227,7 +228,7 @@ namespace SCIMServer.Web.Controllers
                     return ScimNotFound("User", id);
                 }
 
-                updatedUser.Meta.Location = $"{GetBaseUrl()}/scim/v2/Users/{updatedUser.Id}";
+                updatedUser.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Users/{updatedUser.Id}";
                 return Ok(updatedUser);
             }
             catch (Exception ex)
