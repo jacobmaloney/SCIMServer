@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SCIMServer.DataAccess", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SCIMServer.Installer", "src\SCIMServer.Installer\SCIMServer.Installer.csproj", "{77F66E8C-BC85-4445-9F97-FA827F2BDA52}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SCIMServer.Emulator.GoogleWorkspace", "src\SCIMServer.Emulator.GoogleWorkspace\SCIMServer.Emulator.GoogleWorkspace.csproj", "{A5F29D00-0000-4000-8000-000000000001}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -71,6 +73,18 @@ Global
 		{77F66E8C-BC85-4445-9F97-FA827F2BDA52}.Release|x64.Build.0 = Release|Any CPU
 		{77F66E8C-BC85-4445-9F97-FA827F2BDA52}.Release|x86.ActiveCfg = Release|Any CPU
 		{77F66E8C-BC85-4445-9F97-FA827F2BDA52}.Release|x86.Build.0 = Release|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Debug|x64.Build.0 = Debug|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Debug|x86.Build.0 = Debug|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Release|x64.ActiveCfg = Release|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Release|x64.Build.0 = Release|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Release|x86.ActiveCfg = Release|Any CPU
+		{A5F29D00-0000-4000-8000-000000000001}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -80,5 +94,6 @@ Global
 		{BBF4B351-59D4-4C15-A24F-D9E43708380A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{EECD2303-2C19-47CC-BFDD-A0BC9E424100} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{77F66E8C-BC85-4445-9F97-FA827F2BDA52} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{A5F29D00-0000-4000-8000-000000000001} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

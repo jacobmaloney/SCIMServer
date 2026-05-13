@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "GoogleWorkspaceEmulator": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:7443;https://localhost:7444",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
