@@ -136,6 +136,7 @@ builder.Services.AddScoped<ITenantContext, TenantContext>();
 builder.Services.AddScoped<TenantRepository>();
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<GroupRepository>();
+builder.Services.AddScoped<PortalAdminRepository>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<ApiTokenService>();
 builder.Services.AddScoped<AuditLogService>();

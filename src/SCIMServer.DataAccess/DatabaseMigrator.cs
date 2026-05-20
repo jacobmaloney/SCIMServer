@@ -385,6 +385,69 @@ END
 "
             });
 
+            // Migration 8 (v10): PortalAdmins separation. Portal/web-UI admin accounts move
+            // to their own table so SCIM data ops (Delete All Users, DELETE /scim/v2/Users/{id},
+            // tenant resets) can never lock the operator out of their own server again. The
+            // Users table keeps PasswordHash / PasswordSalt / IsAdmin columns for now so we
+            // can roll back the credential read; a later migration can drop them once we're
+            // confident nothing reads them.
+            migrations.Add(new SchemaMigration
+            {
+                Version = 10,
+                Name = "PortalAdmins separation",
+                Description = "Creates PortalAdmins table and migrates existing IsAdmin=1 users into it. Users table is for SCIM only after this.",
+                SqlScript = @"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PortalAdmins')
+BEGIN
+    CREATE TABLE [dbo].[PortalAdmins] (
+        [Id]            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        [UserName]      NVARCHAR(128)    NOT NULL,
+        [DisplayName]   NVARCHAR(256)    NULL,
+        [PasswordHash]  NVARCHAR(512)    NOT NULL,
+        [PasswordSalt]  NVARCHAR(512)    NOT NULL,
+        [Active]        BIT              NOT NULL CONSTRAINT [DF_PortalAdmins_Active] DEFAULT 1,
+        [Created]       DATETIME2        NOT NULL CONSTRAINT [DF_PortalAdmins_Created] DEFAULT SYSUTCDATETIME(),
+        [LastModified]  DATETIME2        NOT NULL CONSTRAINT [DF_PortalAdmins_LastModified] DEFAULT SYSUTCDATETIME(),
+        [LastLoginAt]   DATETIME2        NULL,
+        CONSTRAINT [PK_PortalAdmins] PRIMARY KEY CLUSTERED ([Id]),
+        CONSTRAINT [UQ_PortalAdmins_UserName] UNIQUE ([UserName])
+    );
+END;
+
+-- Copy any IsAdmin=1 user with a stored credential into PortalAdmins, skipping rows
+-- that already exist in the destination (the migration is rerun-safe).
+IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Users')
+   AND EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Users') AND name = 'IsAdmin')
+BEGIN
+    INSERT INTO [dbo].[PortalAdmins] (Id, UserName, DisplayName, PasswordHash, PasswordSalt, Active, Created, LastModified)
+    SELECT u.Id, u.UserName, u.DisplayName, u.PasswordHash, u.PasswordSalt,
+           ISNULL(u.Active, 1), ISNULL(u.Created, SYSUTCDATETIME()), ISNULL(u.LastModified, SYSUTCDATETIME())
+    FROM [dbo].[Users] u
+    WHERE u.IsAdmin = 1
+      AND u.PasswordHash IS NOT NULL
+      AND u.PasswordSalt IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM [dbo].[PortalAdmins] pa WHERE LOWER(pa.UserName) = LOWER(u.UserName));
+
+    -- Remove the admin rows from Users so they don't pollute SCIM /Users responses.
+    -- FK references would block this — clean those out first.
+    DELETE gm
+    FROM [dbo].[GroupMembers] gm
+    INNER JOIN [dbo].[Users] u ON u.Id = gm.Value
+    WHERE u.IsAdmin = 1;
+
+    UPDATE [dbo].[Groups]
+       SET [OwnerId] = NULL
+     WHERE [OwnerId] IN (SELECT Id FROM [dbo].[Users] WHERE IsAdmin = 1);
+
+    UPDATE [dbo].[Users]
+       SET [ManagerId] = NULL
+     WHERE [ManagerId] IN (SELECT Id FROM [dbo].[Users] WHERE IsAdmin = 1);
+
+    DELETE FROM [dbo].[Users] WHERE IsAdmin = 1;
+END;
+"
+            });
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }

@@ -1,20 +1,24 @@
 using System;
 using System.Threading.Tasks;
-using Dapper;
-using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using SCIMServer.DataAccess;
+using SCIMServer.DataAccess.Repositories;
 
 namespace SCIMServer.Web.Services
 {
+    /// <summary>
+    /// Validates portal admin credentials. As of migration v10 these live in their own
+    /// PortalAdmins table, decoupled from SCIM Users — so directory data ops can never
+    /// invalidate the portal login.
+    /// </summary>
     public class LoginService
     {
-        private readonly DatabaseConfig _databaseConfig;
+        private readonly PortalAdminRepository _admins;
         private readonly ILogger<LoginService> _logger;
 
-        public LoginService(DatabaseConfig databaseConfig, ILogger<LoginService> logger)
+        public LoginService(PortalAdminRepository admins, ILogger<LoginService> logger)
         {
-            _databaseConfig = databaseConfig;
+            _admins = admins;
             _logger = logger;
         }
 
@@ -30,61 +34,38 @@ namespace SCIMServer.Web.Services
 
             try
             {
-                using var connection = new SqlConnection(_databaseConfig.ConnectionString);
-                await connection.OpenAsync();
-
-                var row = await connection.QuerySingleOrDefaultAsync<AdminRow>(@"
-                    SELECT TOP 1 [Id], [UserName], [DisplayName], [PasswordHash], [PasswordSalt], [IsAdmin], [Active]
-                    FROM [Users]
-                    WHERE LOWER([UserName]) = LOWER(@UserName)",
-                    new { UserName = lookup });
-
-                if (row == null)
+                var admin = await _admins.GetByUserNameAsync(lookup);
+                if (admin == null)
                 {
-                    _logger.LogWarning("Login rejected: no user found with UserName='{UserName}'", lookup);
+                    _logger.LogWarning("Login rejected: no portal admin with UserName='{UserName}'", lookup);
                     return null;
                 }
-                if (!row.IsAdmin)
+                if (!admin.Active)
                 {
-                    _logger.LogWarning("Login rejected: user '{UserName}' exists but IsAdmin=0", lookup);
+                    _logger.LogWarning("Login rejected: portal admin '{UserName}' is not active", lookup);
                     return null;
                 }
-                if (!row.Active)
+                if (string.IsNullOrEmpty(admin.PasswordHash) || string.IsNullOrEmpty(admin.PasswordSalt))
                 {
-                    _logger.LogWarning("Login rejected: user '{UserName}' is not active", lookup);
-                    return null;
-                }
-                if (string.IsNullOrEmpty(row.PasswordHash) || string.IsNullOrEmpty(row.PasswordSalt))
-                {
-                    _logger.LogWarning("Login rejected: user '{UserName}' has no stored password hash/salt", lookup);
+                    _logger.LogWarning("Login rejected: portal admin '{UserName}' has no stored password hash/salt", lookup);
                     return null;
                 }
 
-                if (!PasswordHasher.Verify(password, row.PasswordHash, row.PasswordSalt))
+                if (!PasswordHasher.Verify(password, admin.PasswordHash, admin.PasswordSalt))
                 {
                     _logger.LogWarning("Login rejected: password hash mismatch for '{UserName}'", lookup);
                     return null;
                 }
 
-                _logger.LogInformation("Admin login OK for '{UserName}'", row.UserName);
-                return new AdminLoginResult(row.Id, row.UserName, row.DisplayName ?? row.UserName);
+                await _admins.MarkLoggedInAsync(admin.Id);
+                _logger.LogInformation("Portal admin login OK for '{UserName}'", admin.UserName);
+                return new AdminLoginResult(admin.Id, admin.UserName, admin.DisplayName ?? admin.UserName);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Login validation threw exception for {Username}", lookup);
                 return null;
             }
-        }
-
-        private class AdminRow
-        {
-            public Guid Id { get; set; }
-            public string UserName { get; set; } = "";
-            public string? DisplayName { get; set; }
-            public string? PasswordHash { get; set; }
-            public string? PasswordSalt { get; set; }
-            public bool IsAdmin { get; set; }
-            public bool Active { get; set; }
         }
     }
 

@@ -487,7 +487,8 @@ namespace SCIMServer.DataAccess.Repositories
         {
             // Foreign-key cleanup so the DELETE doesn't trip FK_Groups_Owner / Users.ManagerId
             // self-FK / GroupMembers.Value. Wrapped in a transaction so a mid-step failure
-            // doesn't leave the row partially detached.
+            // doesn't leave the row partially detached. Portal admin accounts live in
+            // PortalAdmins (migration v10) so they cannot end up here.
             var p = new DynamicParameters();
             p.Add("Id", id);
             AddTenantParam(p);

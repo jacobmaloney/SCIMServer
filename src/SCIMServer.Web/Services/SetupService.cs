@@ -434,8 +434,9 @@ namespace SCIMServer.Web.Services
         }
 
         /// <summary>
-        /// Creates (or updates) the portal administrator account in the Users table.
-        /// Password is hashed with PBKDF2 and stored in PasswordHash/PasswordSalt.
+        /// Creates (or updates) the portal administrator account in the PortalAdmins table.
+        /// As of migration v10 this is decoupled from the SCIM Users table so directory
+        /// data ops can't invalidate the portal login.
         /// </summary>
         private async Task CreateAdminUserAsync(SetupConfiguration config)
         {
@@ -445,23 +446,23 @@ namespace SCIMServer.Web.Services
             await connection.OpenAsync();
 
             var existingId = await Dapper.SqlMapper.QuerySingleOrDefaultAsync<Guid?>(connection,
-                "SELECT [Id] FROM [Users] WHERE [UserName] = @UserName",
+                "SELECT [Id] FROM [PortalAdmins] WHERE LOWER([UserName]) = LOWER(@UserName)",
                 new { UserName = config.AdminUsername });
 
             if (existingId.HasValue)
             {
                 await Dapper.SqlMapper.ExecuteAsync(connection, @"
-                    UPDATE [Users]
-                    SET [PasswordHash] = @Hash, [PasswordSalt] = @Salt, [IsAdmin] = 1, [Active] = 1, [LastModified] = SYSUTCDATETIME()
+                    UPDATE [PortalAdmins]
+                    SET [PasswordHash] = @Hash, [PasswordSalt] = @Salt, [Active] = 1, [LastModified] = SYSUTCDATETIME()
                     WHERE [Id] = @Id",
                     new { Hash = hash, Salt = salt, Id = existingId.Value });
-                _logger.LogInformation("Updated existing admin user: {Username}", config.AdminUsername);
+                _logger.LogInformation("Updated existing portal admin: {Username}", config.AdminUsername);
             }
             else
             {
                 await Dapper.SqlMapper.ExecuteAsync(connection, @"
-                    INSERT INTO [Users] ([Id], [UserName], [Active], [DisplayName], [PasswordHash], [PasswordSalt], [IsAdmin])
-                    VALUES (NEWID(), @UserName, 1, @DisplayName, @Hash, @Salt, 1)",
+                    INSERT INTO [PortalAdmins] ([Id], [UserName], [DisplayName], [PasswordHash], [PasswordSalt], [Active])
+                    VALUES (NEWID(), @UserName, @DisplayName, @Hash, @Salt, 1)",
                     new
                     {
                         UserName = config.AdminUsername,
@@ -469,7 +470,7 @@ namespace SCIMServer.Web.Services
                         Hash = hash,
                         Salt = salt
                     });
-                _logger.LogInformation("Created admin user: {Username}", config.AdminUsername);
+                _logger.LogInformation("Created portal admin: {Username}", config.AdminUsername);
             }
         }
     }
