@@ -38,13 +38,25 @@ namespace SCIMServer.Web.Pages
 
         public async Task<IActionResult> OnPostAsync()
         {
-            var result = await _loginService.ValidateAsync(Username, Password);
-            if (result == null)
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var outcome = await _loginService.ValidateAsync(Username, Password, ip);
+
+            if (outcome.LockedOut)
+            {
+                var seconds = Math.Max(1, (int)outcome.RetryAfter.TotalSeconds);
+                ErrorMessage = $"Too many failed attempts. Try again in {seconds} seconds.";
+                Password = "";
+                Response.Headers["Retry-After"] = seconds.ToString();
+                Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                return Page();
+            }
+            if (!outcome.Success)
             {
                 ErrorMessage = "Invalid username or password.";
                 Password = "";
                 return Page();
             }
+            var result = outcome.Result!;
 
             var claims = new List<Claim>
             {

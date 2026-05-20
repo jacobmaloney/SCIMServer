@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace SCIMServer.Web.Controllers
 {
@@ -11,6 +12,7 @@ namespace SCIMServer.Web.Controllers
     [Produces("application/scim+json")]
     [Route("scim/v2/ServiceProviderConfig")]
     [Route("scim/v2/t/{slug}/ServiceProviderConfig")]
+    [EnableRateLimiting("anon")]
     public class ServiceProviderConfigController : ControllerBase
     {
         [HttpGet]

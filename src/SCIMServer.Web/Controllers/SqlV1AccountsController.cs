@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.SqlClient;
 using SCIMServer.Core.Services;
 using SCIMServer.DataAccess;
@@ -22,6 +23,7 @@ namespace SCIMServer.Web.Controllers
     [ApiController]
     [Route("sql/v1/accounts")]
     [Authorize]
+    [EnableRateLimiting("scim")]
     public class SqlV1AccountsController : ControllerBase
     {
         private const string ConfigKey = "SqlEmulator.ConnectionString";

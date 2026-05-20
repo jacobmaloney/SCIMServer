@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace SCIMServer.Web.Controllers
 {
@@ -12,6 +13,7 @@ namespace SCIMServer.Web.Controllers
     [Produces("application/scim+json")]
     [Route("scim/v2/Schemas")]
     [Route("scim/v2/t/{slug}/Schemas")]
+    [EnableRateLimiting("anon")]
     public class SchemasController : ControllerBase
     {
         private const string UserSchemaId = "urn:ietf:params:scim:schemas:core:2.0:User";

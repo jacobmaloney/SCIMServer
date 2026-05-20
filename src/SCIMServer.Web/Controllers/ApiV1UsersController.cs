@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using SCIMServer.Core.Models;
 using SCIMServer.DataAccess.Repositories;
 
@@ -18,6 +19,7 @@ namespace SCIMServer.Web.Controllers
     [ApiController]
     [Route("api/v1/users")]
     [Authorize]
+    [EnableRateLimiting("scim")]
     public class ApiV1UsersController : ControllerBase
     {
         private readonly UserRepository _users;

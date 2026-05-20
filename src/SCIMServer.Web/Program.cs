@@ -1,6 +1,9 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.IdentityModel.Tokens;
 using SCIMServer.Core.Services;
 using SCIMServer.DataAccess;
@@ -10,6 +13,23 @@ using SCIMServer.Web.Services;
 using SCIMServer.Web.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Kestrel hardening — defends against slow-loris, body-bomb, and resource-exhaustion attacks.
+// These are conservative defaults appropriate for an identity service; raise the body cap
+// only if you legitimately push >256KB SCIM payloads (bulk operations will need their own).
+builder.WebHost.ConfigureKestrel(opts =>
+{
+    opts.Limits.MaxConcurrentConnections = 1000;
+    opts.Limits.MaxConcurrentUpgradedConnections = 100;
+    opts.Limits.MaxRequestBodySize = 256 * 1024;            // 256 KB
+    opts.Limits.MaxRequestHeadersTotalSize = 32 * 1024;     // 32 KB
+    opts.Limits.MaxRequestLineSize = 8 * 1024;              // 8 KB
+    opts.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(60);
+    opts.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
+    opts.Limits.MinRequestBodyDataRate = new MinDataRate(bytesPerSecond: 100, gracePeriod: TimeSpan.FromSeconds(10));
+    opts.Limits.MinResponseDataRate = new MinDataRate(bytesPerSecond: 100, gracePeriod: TimeSpan.FromSeconds(10));
+    opts.AddServerHeader = false;
+});
 
 // Add services to the container
 builder.Services.AddRazorPages();
@@ -149,6 +169,7 @@ builder.Services.AddScoped<SCIMServer.Core.Services.UserGenerationService>();
 builder.Services.AddSingleton<ApplicationLogService>();
 builder.Services.AddSingleton<GenerationService>();
 builder.Services.AddSingleton<DataChangeNotifier>();
+builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHostedService<StartupService>();
 
 // CORS is driven by Cors:AllowedOrigins in configuration. If no origins are
@@ -172,6 +193,86 @@ builder.Services.AddCors(options =>
         }
         // else: empty policy — no cross-origin requests permitted
     });
+});
+
+// Rate limiting — three policies + a global per-IP fallback.
+//
+//   "auth"     — login and token-mint endpoints. Slow on purpose; brute-force resistance
+//                comes from the LoginService lockout AND this bucket.
+//   "scim"     — bearer-token-authenticated API surface. Per-token bucket; large enough
+//                for real provisioners but cheap to cap a runaway client.
+//   "anon"     — anonymous discovery endpoints (ServiceProviderConfig, Schemas, etc).
+//   "global"   — final per-IP guardrail so an attacker hitting unauthenticated routes
+//                can't tie up all available connections.
+//
+// Limits are tunable from configuration via the RateLimits:* keys (see appsettings.json).
+builder.Services.AddRateLimiter(opts =>
+{
+    opts.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    opts.OnRejected = async (ctx, token) =>
+    {
+        if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            ctx.HttpContext.Response.Headers["Retry-After"] =
+                ((int)retryAfter.TotalSeconds).ToString();
+        }
+        ctx.HttpContext.Response.ContentType = "application/json";
+        await ctx.HttpContext.Response.WriteAsync(
+            "{\"error\":\"rate_limited\",\"detail\":\"Too many requests. Slow down and retry.\"}",
+            cancellationToken: token);
+    };
+
+    opts.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            }));
+
+    opts.AddPolicy("scim", httpContext =>
+    {
+        // Partition by token if present, otherwise by IP — so one shared IP across
+        // many tokens doesn't starve everyone.
+        var auth = httpContext.Request.Headers["Authorization"].ToString();
+        var key = !string.IsNullOrEmpty(auth) && auth.StartsWith("Bearer scim_", StringComparison.OrdinalIgnoreCase)
+            ? "tok:" + auth[..Math.Min(auth.Length, 24)]    // token-prefix only — never log the full value
+            : "ip:" + (httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        return RateLimitPartition.GetTokenBucketLimiter(
+            partitionKey: key,
+            factory: _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 200,
+                TokensPerPeriod = 100,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(10),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            });
+    });
+
+    opts.AddPolicy("anon", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+
+    opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
 });
 
 var app = builder.Build();
@@ -211,14 +312,77 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// Configure the HTTP request pipeline
+// Configure the HTTP request pipeline.
+//
+// Pipeline order matters — security middleware runs before the routes that need
+// protecting. Specifically:
+//   1. Production error handler (no stack-trace leakage)
+//   2. HSTS + HTTPS redirect (only when HTTPS is actually configured)
+//   3. Security headers (HSTS, X-Frame-Options, X-Content-Type-Options, CSP, …)
+//   4. Static files (gets the headers too)
+//   5. Routing (resolves the endpoint)
+//   6. Setup check (block requests until /setup is complete)
+//   7. CORS (after routing so per-endpoint CORS can work)
+//   8. Rate limiter (block abusive traffic before we do any DB work)
+//   9. Token + authentication
+//  10. Authorization
+//  11. SCIM connection logger
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Error");
+    // Two-track exception handler:
+    //   - HTML routes get the /Error page (generic, log-correlation Request ID).
+    //   - API routes (/scim, /api, /sql, /ars, /health) get a JSON envelope with
+    //     the same correlation id and no stack-trace details.
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            var requestId = System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier;
+            var path = context.Request.Path.Value ?? string.Empty;
+            var isApi = path.StartsWith("/scim/", StringComparison.OrdinalIgnoreCase)
+                     || path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+                     || path.StartsWith("/sql/", StringComparison.OrdinalIgnoreCase)
+                     || path.StartsWith("/ars/", StringComparison.OrdinalIgnoreCase)
+                     || path.StartsWith("/health", StringComparison.OrdinalIgnoreCase);
+
+            // The ExceptionHandlerPathFeature carries the original exception; log it
+            // but never let it reach the wire.
+            var ex = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>()?.Error;
+            if (ex is not null)
+            {
+                var log = context.RequestServices.GetRequiredService<ILogger<Program>>();
+                log.LogError(ex, "Unhandled exception on {Path} (request {RequestId})", path, requestId);
+            }
+
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            if (isApi)
+            {
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(
+                    $"{{\"error\":\"internal_error\",\"detail\":\"An unexpected error occurred. Reference id {requestId} in your logs.\",\"requestId\":\"{requestId}\"}}");
+            }
+            else
+            {
+                context.Response.Redirect("/Error?requestId=" + Uri.EscapeDataString(requestId));
+            }
+        });
+    });
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+// Only redirect to HTTPS when we actually have an HTTPS port to redirect to —
+// avoids the "Failed to determine the https port for redirect" warning in HTTP-only
+// dev runs while still enforcing HTTPS in any real deployment.
+var httpsPort = app.Configuration["HTTPS_PORT"]
+    ?? Environment.GetEnvironmentVariable("ASPNETCORE_HTTPS_PORT")
+    ?? Environment.GetEnvironmentVariable("ASPNETCORE_HTTPS_PORTS");
+var hasHttpsUrl = (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "").Contains("https://");
+if (!string.IsNullOrEmpty(httpsPort) || hasHttpsUrl || !app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseStaticFiles();
 app.UseRouting();
 
@@ -226,6 +390,10 @@ app.UseRouting();
 app.UseSetupCheck();
 
 app.UseCors("SCIMPolicy");
+
+// Rate limiting MUST come before auth so that a bad token doesn't drain the bucket
+// by spinning ApiTokenAuthMiddleware repeatedly.
+app.UseRateLimiter();
 
 // Authenticate scim_ API tokens before the JWT handler runs
 app.UseMiddleware<ApiTokenAuthMiddleware>();
@@ -239,6 +407,10 @@ app.UseMiddleware<ScimConnectionLoggingMiddleware>();
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 app.MapControllers();
+// Razor Pages — /login and /logout. Apply the auth bucket so the login form
+// itself sits behind a per-IP brute-force limiter on top of the in-LoginService
+// per-(user,IP) throttle.
+app.MapRazorPages().RequireRateLimiting("auth");
 
 // Add a simple health check endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));

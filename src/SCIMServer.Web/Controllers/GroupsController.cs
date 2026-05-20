@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Newtonsoft.Json.Linq;
 using SCIMServer.Core.Models;
 using SCIMServer.DataAccess.Repositories;
@@ -15,6 +16,7 @@ namespace SCIMServer.Web.Controllers
     /// </summary>
     [Route("scim/v2/[controller]")]
     [Route("scim/v2/t/{slug}/[controller]")]
+    [EnableRateLimiting("scim")]
     public class GroupsController : BaseScimController
     {
         private readonly GroupRepository _groupRepository;

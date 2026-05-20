@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using SCIMServer.Core.Models;
 using SCIMServer.Core.Services;
@@ -28,6 +29,7 @@ namespace SCIMServer.Web.Controllers
     /// </summary>
     [ApiController]
     [Route("ars/v1")]
+    [EnableRateLimiting("scim")]
     [Authorize]
     public class ArsV1Controller : ControllerBase
     {

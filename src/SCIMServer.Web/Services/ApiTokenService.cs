@@ -34,6 +34,12 @@ namespace SCIMServer.Web.Services
         /// as the raw token value (allowing deterministic demo tokens such as "demo-kodak-2024").
         /// The full bearer header is always <c>scim_{value}</c>.
         /// </summary>
+        // Tokens minted without an explicit expiration default to this much wall-clock —
+        // long enough for a real provisioner not to surprise-rotate during a quarter, short
+        // enough that a forgotten token doesn't live forever. Fixed-value demo tokens
+        // (EnsureFixedTokenAsync) intentionally pass null and stay non-expiring.
+        public static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromDays(90);
+
         public async Task<string> CreateTokenAsync(
             string name,
             string? description,
@@ -45,6 +51,15 @@ namespace SCIMServer.Web.Services
             var tokenId = Guid.NewGuid();
             var tokenValue = string.IsNullOrEmpty(fixedRawValue) ? GenerateSecureToken() : fixedRawValue;
             var hashedToken = HashToken(tokenValue);
+
+            // Only apply the default to random-value tokens — demo seed passes a fixed value
+            // AND null expiresAt to mean "never expire," which is the right behavior for
+            // documented sample credentials.
+            DateTime? effectiveExpiry = expiresAt;
+            if (effectiveExpiry is null && string.IsNullOrEmpty(fixedRawValue))
+            {
+                effectiveExpiry = DateTime.UtcNow.Add(DefaultTokenLifetime);
+            }
 
             const string sql = @"
                 INSERT INTO ApiTokens (Id, Name, Description, TokenHash, CreatedAt, ExpiresAt, IsActive, TenantId, Scope)
@@ -58,7 +73,7 @@ namespace SCIMServer.Web.Services
                 Description = description,
                 TokenHash = hashedToken,
                 CreatedAt = DateTime.UtcNow,
-                ExpiresAt = expiresAt,
+                ExpiresAt = effectiveExpiry,
                 IsActive = true,
                 TenantId = tenantId,
                 Scope = string.IsNullOrEmpty(scope) ? "Tenant" : scope
