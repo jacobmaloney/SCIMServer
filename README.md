@@ -1,318 +1,296 @@
-# SCIMServer - Enterprise SCIM 2.0 Implementation
+# SCIMServer
 
-A professional, open-source SCIM 2.0 server implementation built with ASP.NET Core and Blazor Server, designed for enterprise identity management and provisioning.
+A small, opinionated, security-hardened SCIM 2.0 server you can run on a laptop. Built with ASP.NET Core 8 + Blazor Server + Dapper + SQL Server. Multi-tenant from the ground up — every workload is a **Connected System**, every API call carries a slug or a tenant-scoped bearer token, and the same backend serves SCIM 2.0, a flat REST surface, and a SQL-account emulator.
 
-## Features
+The intent is to stand up a believable provisioning target in five minutes — for demoing Entra ID, Okta, ARS, or any other identity source — without having to learn anyone's SaaS console.
 
-### Core SCIM 2.0 Support
-- Full User resource implementation with enterprise extension
-- Group resource management (repository layer ready)
-- Standard SCIM operations: CREATE, READ, UPDATE (PUT/PATCH), DELETE
-- SCIM-compliant error responses and metadata handling
+![SCIM 2.0](https://img.shields.io/badge/SCIM-2.0-10b981) ![.NET 8](https://img.shields.io/badge/.NET-8-512bd4) ![Blazor Server](https://img.shields.io/badge/Blazor-Server-512bd4) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-### Security & Authentication
-- JWT Bearer token authentication
-- API token management with secure storage
-- Configurable authentication settings
-- Token expiration and activity tracking
+---
 
-### Web Interface
-- Modern Blazor Server UI for administration
-- User management dashboard
-- API token generation and management
-- Audit log viewing
-- Configuration management
-- User generation tools for testing
+## What's in here
 
-### Data Management
-- SQL Server database backend
-- Extensible schema with custom attributes
-- Comprehensive audit logging
-- Transaction support for data integrity
+- **SCIM 2.0 surface** — `Users`, `Groups`, `Schemas`, `ResourceTypes`, `ServiceProviderConfig`. Filter parser, PATCH operations, location round-trip, enterprise extension. Listens at `/scim/v2/...` (token-scoped) and `/scim/v2/t/{slug}/...` (slug-scoped, recommended).
+- **Flat REST emulator** — `/api/v1/users` + `/api/v1/groups` for callers that don't speak SCIM.
+- **SQL account emulator** — `/sql/v1/accounts` for database-account provisioning demos.
+- **ARS inbound proxy** — `/ars/v1/users` + `/ars/v1/groups/{id}/members` for ARS PowerShell workflows that want to write back into AD via the Administration Service.
+- **Multi-tenant Connected Systems** — each "workload" you provision into is its own tenant: a name, a URL slug, demo or real, isolated user/group data, its own tokens.
+- **Portal UI** — Users / Groups / Tokens / Connected Systems / Quick Connect / Setup wizard / Generator / Logs. Active connection is always visible at the top of the page; the sidebar drives scope for every list.
+- **Demo seed** — one click and you get 2 Connected Systems with 25 users + 5 groups each, plus 4 fixed-value tokens you can copy out of the Endpoints modal.
+- **Built-in test user generator** — generate up to 10,000 realistic users (org chart, departments, locations) into any Connected System; dedupes against the live tenant so re-runs don't collide.
 
-## Quick Start
+## Security posture
 
-### Prerequisites
-- .NET 8.0 SDK or later
-- SQL Server (LocalDB, Express, or full instance)
-- Visual Studio 2022 or VS Code (optional)
+This server is intended to pass routine pen-test sweeps out of the box. Hardening that ships in this repo:
 
-### Installation
+| Concern | Defence |
+|---|---|
+| Brute-force on `/login` | Per-(user, IP) sliding-window throttle: soft delay after 5 failures, 15-min hard lockout after 10. Returns `429 + Retry-After`. Events go to the audit log. |
+| Brute-force on API tokens | Per-IP `auth` rate-limit policy (10/min) on the login + token-mint routes; per-token bucket on the API surface (200 token bucket, refills 100/10s). |
+| DDoS / slow-loris | Kestrel `MaxConcurrentConnections`, `MaxRequestBodySize 256KB`, `KeepAliveTimeout 60s`, `RequestHeadersTimeout 15s`, `Min*DataRate 100 B/s` with grace. |
+| Clickjacking / MIME sniff / framing | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Resource-Policy: same-origin`. |
+| Cross-site script injection | Strict CSP. JSON API routes get `default-src 'none'`; Blazor portal gets the framework-required CSP. |
+| Token / password storage | PBKDF2-SHA256 @ **600,000 iterations** (OWASP 2023). API tokens are stored as SHA-256 of the raw value; raw values are shown once at mint. |
+| Token sprawl | Tokens default to a **90-day expiry** when no explicit value is set. |
+| Server fingerprinting | `X-Powered-By` / `X-AspNet-Version` stripped; Kestrel server header off. |
+| HTTPS | HSTS issued only over HTTPS; `UseHttpsRedirection` wires only when HTTPS is actually configured. |
+| Auth bypass via URL form | A bearer token whose `TenantId` doesn't match the URL slug is rejected with **403 insufficient_scope** — a leaked token can't be aimed at a different connection just by changing the URL. |
+| Cookie auth + API mixing | `/scim/`, `/api/v1/`, `/sql/v1/`, `/ars/v1/` return clean `401 + WWW-Authenticate: Bearer` instead of an HTML login redirect — SCIM clients don't get surprise HTML. |
+| Stack-trace leak | Production exception handler returns a generic error + correlation id; details land in logs only. JSON responses for API routes, HTML for portal routes. |
+| Audit | Login successes / failures / lockouts, token mints, admin CRUD, and mass-cleanup operations write to the AuditLogs table with IP, user-agent, and correlation id. |
+| Portal lockout | Portal admin accounts live in a **separate `PortalAdmins` table** from SCIM `Users`. No data operation against `Users` can invalidate the portal login. |
 
-1. Clone the repository:
+Documented exclusions (don't run this in production without addressing these):
+- No persisted brute-force throttle (in-memory; process restart resets the counter).
+- No external secret management — `Jwt:SecretKey` is read from local config.
+- No client-cert pinning for outbound HTTP. The SQL emulator and ARS proxy targets connect with the credentials in config.
+- No CI vulnerability scan or SBOM in this repo today.
+
+See [`docs/ISSUES_AND_IMPROVEMENTS.md`](docs/ISSUES_AND_IMPROVEMENTS.md) for the full list.
+
+---
+
+## Quick start (laptop)
+
 ```bash
-git clone https://github.com/yourusername/SCIMServer.git
+git clone https://github.com/jacobmaloney/SCIMServer.git
 cd SCIMServer
-```
-
-2. Build the solution:
-```bash
-dotnet build
-```
-
-3. Configure the database connection in `appsettings.json`:
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=(localdb)\\mssqllocaldb;Database=SCIMServer;Trusted_Connection=True;"
-  }
-}
-```
-
-4. Run the application:
-```bash
-cd src/SCIMServer.Web
-dotnet run
-```
-
-5. Navigate to `https://localhost:5001` for the web interface
-
-## API Documentation
-
-### Base URL
-```
-https://your-server/scim/v2
-```
-
-### Authentication
-Include the Bearer token in the Authorization header:
-```
-Authorization: Bearer <your-jwt-token>
-```
-
-### User Endpoints
-
-#### List Users
-```http
-GET /scim/v2/Users
-```
-
-#### Get User
-```http
-GET /scim/v2/Users/{id}
-```
-
-#### Create User
-```http
-POST /scim/v2/Users
-Content-Type: application/scim+json
-
-{
-  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
-  "userName": "john.doe@example.com",
-  "name": {
-    "givenName": "John",
-    "familyName": "Doe"
-  },
-  "emails": [{
-    "value": "john.doe@example.com",
-    "type": "work",
-    "primary": true
-  }]
-}
-```
-
-#### Update User (Full)
-```http
-PUT /scim/v2/Users/{id}
-Content-Type: application/scim+json
-```
-
-#### Update User (Partial)
-```http
-PATCH /scim/v2/Users/{id}
-Content-Type: application/scim+json
-
-{
-  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-  "Operations": [{
-    "op": "replace",
-    "path": "name.givenName",
-    "value": "Jane"
-  }]
-}
-```
-
-#### Delete User
-```http
-DELETE /scim/v2/Users/{id}
-```
-
-## Architecture
-
-### Solution Structure
-```
-SCIMServer/
-├── src/
-│   ├── SCIMServer.Core/          # Domain models and business logic
-│   ├── SCIMServer.DataAccess/    # Data access layer and repositories
-│   ├── SCIMServer.Web/           # Web application and API
-│   └── SCIMServer.Installer/     # Installation wizard
-├── Database/                      # Database scripts
-└── docker-compose.yml            # Docker configuration
-```
-
-### Technology Stack
-- **Framework**: ASP.NET Core 8.0
-- **UI**: Blazor Server
-- **ORM**: Dapper
-- **Database**: SQL Server
-- **Authentication**: JWT Bearer tokens
-- **API**: RESTful SCIM 2.0
-
-## Configuration
-
-### JWT Settings
-Configure JWT authentication in `appsettings.json`:
-```json
-{
-  "JwtConfig": {
-    "SecretKey": "your-secret-key-here",
-    "Issuer": "SCIMServer",
-    "Audience": "SCIMServerAPI",
-    "ExpirationMinutes": 60
-  }
-}
-```
-
-### Database Configuration
-Connection string configuration:
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "your-connection-string"
-  }
-}
-```
-
-### CORS Settings
-Configure CORS for API access:
-```json
-{
-  "Cors": {
-    "AllowedOrigins": ["https://trusted-client.com"],
-    "AllowedMethods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    "AllowedHeaders": ["Authorization", "Content-Type"]
-  }
-}
-```
-
-## Development
-
-### Building from Source
-```bash
-# Clone repository
-git clone https://github.com/yourusername/SCIMServer.git
-
-# Restore dependencies
-dotnet restore
-
-# Build solution
-dotnet build
-
-# Run tests
-dotnet test
-
-# Run application
 dotnet run --project src/SCIMServer.Web
 ```
 
-### Database Migrations
+The first time, the app sees no configured database and routes you to **`/setup`**:
 
-The schema is managed by `SCIMServer.DataAccess.DatabaseInitializer`, which runs
-automatically on application startup. On a fresh database it executes the
-canonical bootstrap script (`Database/CreateDatabase.sql`, embedded into
-`SCIMServer.DataAccess.dll`); on an existing database it applies any pending
-incremental migrations from `DatabaseMigrator`.
+1. Paste a SQL Server connection string (LocalDB or a real instance — anything Dapper can open).
+2. Pick a database name. The wizard offers to create it if it doesn't exist.
+3. Pick a portal admin username + password. These live in the dedicated **`PortalAdmins`** table, kept separate from the SCIM `Users` table so a "Delete All Users" can't lock you out of your own server.
 
-If you prefer to provision the schema manually:
+After setup, navigate to **`/connected-systems`** and click **Seed Demo**. You'll get:
+
+- **Default** (slug `default`) — empty, your sandbox
+- **Internal App Demo** (slug `internal-app`) — 25 users, 5 groups
+- **Kodak — Entra ID Staging** (slug `kodak-entraid`) — 25 users, 5 groups, sample domain
+- Four fixed-value tokens (raw values are documented in the Endpoints modal):
+  - `admin-token` → Admin scope, can reach any slug
+  - `kodak-entraid-token` → scoped to Kodak slug only
+  - `internal-app-token` → scoped to Internal App slug only
+  - `ars-proxy-token` → scoped to the `/ars/v1` surface
+
+That's enough to do every SCIM call against a real server.
+
+---
+
+## API at a glance
+
+There are **two URL forms** for the SCIM surface and they're functionally identical:
+
+| Form | Example | Tenant determined by | When to use |
+|---|---|---|---|
+| **Slug** (recommended) | `/scim/v2/t/kodak-entraid/Users` | The slug in the URL | Real apps. Mistakes are visible at the URL — a leaked token can't be aimed at a different system. |
+| **Token-only** (legacy) | `/scim/v2/Users` | The bearer token's `TenantId` | Demos. Useful when one client speaks to one connection only. |
+
+When both are present, the URL wins — and a token whose `TenantId` doesn't match the slug returns **403 insufficient_scope** instead of silently re-scoping.
+
+### Authentication
+
+Every API call wants `Authorization: Bearer scim_<value>`. The raw value is shown **once** at creation time on `/tokens` — there's a "Test this token now" button right in the create dialog that hits `/scim/v2/ServiceProviderConfig` so you can verify before walking away.
+
+### Worked examples
+
+**List users in a Connected System** (cURL):
 ```bash
-sqlcmd -S (localdb)\mssqllocaldb -d SCIMServer -i Database/CreateDatabase.sql
+curl -H "Authorization: Bearer scim_admin-scimserver-2024" \
+     -H "Accept: application/scim+json" \
+     "http://localhost:5000/scim/v2/t/kodak-entraid/Users?count=10"
 ```
-The next application start will pick up any newer migrations and bring the
-schema current.
 
-## Docker Support
+**Create a user** (PowerShell):
+```powershell
+$headers = @{
+    "Authorization" = "Bearer scim_admin-scimserver-2024"
+    "Content-Type"  = "application/scim+json"
+}
+$body = @{
+    schemas  = @("urn:ietf:params:scim:schemas:core:2.0:User")
+    userName = "jsmith"
+    name     = @{ givenName = "John"; familyName = "Smith" }
+    emails   = @(@{ value = "jsmith@example.com"; primary = $true })
+    active   = $true
+} | ConvertTo-Json -Depth 5
 
-### Using Docker Compose
+Invoke-RestMethod -Method Post `
+    -Uri "http://localhost:5000/scim/v2/t/kodak-entraid/Users" `
+    -Headers $headers -Body $body
+```
+
+**Disable a user** (SCIM PATCH):
+```powershell
+$body = @{
+    schemas    = @("urn:ietf:params:scim:api:messages:2.0:PatchOp")
+    Operations = @(@{ op = "replace"; path = "active"; value = $false })
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method Patch `
+    -Uri "http://localhost:5000/scim/v2/t/kodak-entraid/Users/<user-id>" `
+    -Headers $headers -Body $body
+```
+
+**Filter by userName**:
+```
+GET /scim/v2/t/kodak-entraid/Users?filter=userName%20eq%20%22jsmith%22
+```
+
+Open any Connected System in the UI → **Endpoints** to get a copy-pasteable cURL + PowerShell example pre-filled with the active slug and token for that system.
+
+---
+
+## Solution layout
+
+```
+SCIMServer/
+├── src/
+│   ├── SCIMServer.Core/                       — Domain models, SCIM filter parser, generation
+│   ├── SCIMServer.DataAccess/                 — Dapper repositories + DatabaseMigrator
+│   ├── SCIMServer.Web/                        — Blazor portal + REST controllers + middleware
+│   ├── SCIMServer.Installer/                  — Optional install wizard
+│   └── SCIMServer.Emulator.GoogleWorkspace/   — Separate process: Google Workspace
+│                                                Admin SDK emulator (standalone; not started by default)
+├── Database/                                  — CreateDatabase.sql + emulator schema
+├── docs/                                      — API reference, dev guide, issues log
+└── docker-compose.yml                         — Optional containerized run
+```
+
+### Tech stack
+- **Framework:** ASP.NET Core 8.0
+- **UI:** Blazor Server + custom design system overlay on Bootstrap
+- **ORM:** Dapper (no EF Core)
+- **Database:** SQL Server (LocalDB / Express / full)
+- **Auth:** Cookie session for the portal, `scim_*` API tokens for the SCIM/REST surfaces, with a `SmartAuth` policy scheme that picks per-request based on headers
+
+### Auth model in one paragraph
+
+The `ApiTokenAuthMiddleware` runs after `UseRouting` and sees `Authorization: Bearer scim_*`. Validation hashes the raw value, looks it up in `ApiTokens`, and writes `TenantId` + `Scope` into `HttpContext.Items`. If a URL slug is present, it's authoritative — a token scoped to a different tenant gets 403. For browser sessions there's a Cookie scheme that's wired so any request to `/scim/`, `/api/v1/`, `/sql/v1/`, or `/ars/v1/` without a Bearer header gets a clean `401 + WWW-Authenticate: Bearer` instead of an HTML login redirect.
+
+### Pipeline order
+
+```
+Kestrel (limits)
+  → UseExceptionHandler (prod-only JSON/HTML split)
+  → UseHsts                       (HTTPS only)
+  → UseHttpsRedirection           (only when HTTPS configured)
+  → SecurityHeadersMiddleware
+  → UseStaticFiles
+  → UseRouting
+  → UseSetupCheck
+  → UseCors
+  → UseRateLimiter                (auth / scim / anon / global)
+  → ApiTokenAuthMiddleware        (Bearer scim_*)
+  → UseAuthentication             (SmartAuth → JWT or Cookie)
+  → UseAuthorization
+  → ScimConnectionLoggingMiddleware
+  → MapBlazorHub + MapControllers + MapRazorPages
+```
+
+---
+
+## Configuration
+
+The Setup wizard writes everything — you don't normally edit JSON. The keys it touches:
+
+```jsonc
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=.;Database=SCIMServer;Trusted_Connection=True;TrustServerCertificate=True;"
+  },
+  "JwtConfig": {
+    "SecretKey": "<auto-generated; do not check into git>",
+    "Issuer": "SCIMServer",
+    "Audience": "SCIMServerAPI",
+    "ExpirationMinutes": 60
+  },
+  "Cors": {
+    "AllowedOrigins": [],
+    "AllowedMethods": [ "GET", "POST", "PUT", "PATCH", "DELETE" ],
+    "AllowedHeaders": [ "Authorization", "Content-Type" ]
+  }
+}
+```
+
+If `Cors:AllowedOrigins` is empty (the default) nothing cross-origin is allowed — the right default for an identity service. Add origins to permit specific SCIM clients.
+
+---
+
+## Database migrations
+
+The schema is managed by `SCIMServer.DataAccess.DatabaseMigrator` — no EF Core. It runs on every app start and applies anything newer than the last `SchemaVersion` row. As of today:
+
+- **v1** — initial schema (CreateDatabase.sql)
+- **v2–v3** — schema repairs for GroupMembers and Groups.OwnerId
+- **v4–v5** — `ApiTokens` shape + `IsAdmin` on Users (now superseded)
+- **v6 (v8)** — multi-tenant Tenants table + per-row `TenantId`
+- **v7 (v9)** — `SqlAccounts` table for the `/sql/v1/` emulator
+- **v10** — **PortalAdmins** table separation: portal/web-UI admin accounts move out of `Users` so SCIM data ops can never lock the operator out
+
+Migrations are idempotent; running them against an already-current database is a no-op.
+
+---
+
+## Demoing this thing
+
+A useful 5-minute path through the UI:
+
+1. `/setup` → create the DB
+2. `/connected-systems` → click **Seed Demo**
+3. Pick a system in the upper-left switcher → `/users` and `/groups` now scope to it
+4. `/quick-connect` (or any system's **Endpoints** modal) → copy a cURL example
+5. Make a SCIM POST → see the new user in `/users` immediately
+6. PATCH it `active=false` → status pill turns red in the UI
+
+The page title shows **the active connection** on every page, the sidebar shows live **user + group counts** for the active system, and every code block in the Endpoints modal has a one-click copy button.
+
+---
+
+## What's not done yet
+
+Honest list. See [`docs/ISSUES_AND_IMPROVEMENTS.md`](docs/ISSUES_AND_IMPROVEMENTS.md) for detail.
+
+- **Bulk operations** — `/scim/v2/Bulk` endpoint is on the roadmap, not shipped.
+- **Persisted brute-force counters** — in-memory today; restart resets.
+- **Audit log surface** — events are written to the DB but the UI viewer is minimal.
+- **Google Workspace emulator** — separate ASP.NET project (`SCIMServer.Emulator.GoogleWorkspace`), not started by the main process. Has its own Admin SDK-style endpoints + OAuth2 service-account token flow.
+- **ARS proxy execution** — `/ars/v1/...` accepts and logs requests; PowerShell handoff to the live Administration Service is the next iteration.
+- **External secret management** — `Jwt:SecretKey` in local config; no Key Vault integration yet.
+
+---
+
+## Docker
+
 ```bash
-# Development environment
+# dev
 docker-compose -f docker-compose.dev.yml up
 
-# Production environment
+# prod-shape
 docker-compose up
 ```
 
-### Building Docker Image
+Or build directly:
 ```bash
 docker build -t scimserver .
 docker run -p 5000:5000 scimserver
 ```
 
-## Known Issues & Roadmap
-
-### Current Limitations
-- Groups API controller not yet implemented (repository ready)
-- SCIM filtering not fully implemented
-- No bulk operations endpoint
-- Schema discovery endpoints missing
-
-### Planned Features
-- [ ] Complete Groups API implementation
-- [ ] Full SCIM filtering support
-- [ ] Bulk operations endpoint
-- [ ] Schema and ResourceType discovery
-- [ ] ServiceProviderConfig endpoint
-- [ ] Enhanced security features (rate limiting, RBAC)
-- [ ] Performance optimizations and caching
-- [ ] Comprehensive test coverage
-- [ ] OpenAPI/Swagger documentation
-
-## Contributing
-
-We welcome contributions! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Code Style
-- Follow C# coding conventions
-- Use meaningful variable and method names
-- Add XML documentation for public APIs
-- Write unit tests for new features
-
-## Security
-
-### Reporting Security Issues
-Please report security vulnerabilities to [security@example.com]
-
-### Best Practices
-- Always use HTTPS in production
-- Configure strong JWT secret keys
-- Implement proper CORS policies
-- Enable audit logging
-- Regular security updates
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-- **Documentation**: [Wiki](https://github.com/yourusername/SCIMServer/wiki)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/SCIMServer/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/SCIMServer/discussions)
+MIT — see [`LICENSE`](LICENSE).
 
 ## Acknowledgments
 
-- SCIM 2.0 specification by IETF
-- ASP.NET Core team at Microsoft
-- Dapper micro-ORM contributors
-- Open source community
+- SCIM 2.0 (RFC 7642 / 7643 / 7644) — IETF
+- ASP.NET Core team
+- Dapper contributors
+- The Google Workspace emulator companion project was contributed by [Claude Cowork](https://claude.com/coworking)
 
 ---
 
-**Note**: This is an active development project. Features and APIs may change. For production use, please review security configurations and implement appropriate hardening measures.
+**Status:** active development, demo-grade today. Suitable for non-production identity demos, lab environments, and SCIM client testing. Production-grade hardening — persistent rate counters, external secret management, full audit UI — is on the roadmap; see the issues log for the gap.

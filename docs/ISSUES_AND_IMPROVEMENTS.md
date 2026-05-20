@@ -1,314 +1,91 @@
-# SCIMServer - Issues and Improvements
+# Issues & Improvements
 
-## Critical Issues to Fix
+Honest log of what's still open. Items marked **resolved** stay in the file with the closing commit so the audit trail is visible. Everything else is a real open.
 
-### 1. Security Vulnerabilities
+---
 
-#### JWT Configuration (HIGH PRIORITY)
-**Issue**: Hardcoded development JWT secret key in configuration
-**Location**: `src/SCIMServer.Web/appsettings.json`
-**Impact**: Major security vulnerability in production
-**Solution**:
-- Use environment variables or Azure Key Vault for secrets
-- Generate strong cryptographic keys
-- Implement key rotation mechanism
+## Resolved (kept for history)
 
-#### CORS Policy (HIGH PRIORITY)
-**Issue**: Overly permissive CORS settings allowing any origin
-**Location**: `src/SCIMServer.Web/Program.cs`
-**Impact**: Cross-origin security risks
-**Solution**:
-- Configure specific allowed origins
-- Implement environment-specific CORS policies
-- Add proper validation for origins
+- ✅ **Groups API controller** — implemented in `Controllers/GroupsController.cs`. Full CRUD + member ops.
+- ✅ **SCIM filter parsing** — `Core/Filtering/ScimFilterParser.cs` + `SqlFilterBuilder.cs`. `eq`, `ne`, `co`, `sw`, `ew`, `gt`, `lt`, `ge`, `le`, `pr`, with `and` / `or`.
+- ✅ **Schema discovery** — `SchemasController`, `ResourceTypesController`, `ServiceProviderConfigController` all anonymous-accessible.
+- ✅ **JWT brittleness** — replaced as the primary API auth mechanism. `scim_*` tokens with SHA-256 hash storage are the supported flow. JWT support remains for compatibility but isn't the default.
+- ✅ **CORS overly permissive** — default policy now allows nothing cross-origin. Operators must explicitly add origins to `Cors:AllowedOrigins`.
+- ✅ **HTTPS redirect noise in dev** — `UseHttpsRedirection` is now conditional on HTTPS actually being configured; production deployments still enforce.
+- ✅ **Admin lockout via SCIM data ops** — portal admins moved to a separate `PortalAdmins` table in migration v10. `Delete All Users` can no longer invalidate the portal login.
+- ✅ **Token mint UX** — create modal now surfaces the full `Authorization: Bearer scim_xxx` header (not just the raw value), forces a "I've copied it" confirmation, and has a built-in "Test this token now" button that round-trips against `/scim/v2/ServiceProviderConfig`.
+- ✅ **Multi-tenant SCIM URL scope** — `/scim/v2/t/{slug}/...` route accepted across all controllers; URL slug is authoritative when both slug and token are present; mismatched scope returns 403.
+- ✅ **API consumers get HTML 302 on auth failure** — Cookie scheme now returns clean `401 + WWW-Authenticate: Bearer` for `/scim/`, `/api/v1/`, `/sql/v1/`, `/ars/v1/`.
+- ✅ **Stack-trace leak risk** — production `UseExceptionHandler` branches on path: HTML routes redirect to `/Error`, API routes return a JSON envelope with a correlation id and no details.
+- ✅ **Rate limiting** — ASP.NET Core 8 `RateLimiter` with four named policies (`auth`, `scim`, `anon`, `global`). Token-bucket on the API surface partitioned by bearer token, fixed-window per-IP elsewhere.
+- ✅ **Brute-force login** — `LoginThrottle` (singleton) gives sliding-window soft delay + hard lockout per (user, IP). Returns `429 Retry-After`. Events go to the audit log.
+- ✅ **Security headers bundle** — `SecurityHeadersMiddleware` writes HSTS (HTTPS only), CSP (varies by route), X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy, Permissions-Policy, Cross-Origin-Opener/Resource-Policy. Strips X-Powered-By / X-AspNet-Version. Kestrel server header off.
+- ✅ **Kestrel hardening** — MaxConcurrentConnections, MaxRequestBodySize 256KB, header size caps, KeepAlive/RequestHeaders timeouts, Min*DataRate against slow-loris.
+- ✅ **PBKDF2 cost** — iterations bumped 100k → 600k (OWASP 2023). `Verify` accepts both costs so existing hashes still work.
+- ✅ **Token sprawl** — `CreateTokenAsync` defaults a 90-day expiration when caller passes null. Fixed-value demo tokens intentionally remain non-expiring.
 
-#### Missing HTTPS Enforcement (MEDIUM PRIORITY)
-**Issue**: No automatic redirect to HTTPS in production
-**Location**: `src/SCIMServer.Web/Program.cs`
-**Impact**: Data transmitted in plain text
-**Solution**:
-- Add HTTPS redirection middleware
-- Implement HSTS headers
-- Configure proper SSL/TLS settings
+---
 
-### 2. Missing Core Functionality
+## Open — security
 
-#### Groups API Controller (HIGH PRIORITY)
-**Issue**: Repository exists but no API controller implementation
-**Files Affected**:
-- Need to create: `src/SCIMServer.Web/Controllers/GroupsController.cs`
-- Existing: `src/SCIMServer.DataAccess/Repositories/GroupRepository.cs`
-**Impact**: Incomplete SCIM implementation
-**Solution**:
-- Implement full CRUD operations for Groups
-- Add member management endpoints
-- Support nested group operations
+### Persistent brute-force throttle (MEDIUM)
+**Issue:** `LoginThrottle` lives in-process. A restart resets failure counters.
+**Solution:** Move the bucket state to a `LoginAttempts` table — same sliding-window semantics, durable across restarts. Cheaper than it sounds since each lookup is keyed by (UsernameLower, IpAddress).
 
-#### SCIM Filtering (HIGH PRIORITY)
-**Issue**: Filter parameter accepted but not processed
-**Location**: `src/SCIMServer.Web/Controllers/UsersController.cs`
-**Impact**: Cannot filter results as per SCIM spec
-**Solution**:
-- Implement SCIM filter parser
-- Convert filters to SQL WHERE clauses
-- Support all SCIM operators
+### External secret management (MEDIUM)
+**Issue:** `Jwt:SecretKey` is read from local `appsettings.json` / env. There's no integration with Key Vault, AWS Secrets Manager, or a sidecar.
+**Solution:** Add `IConfigurationBuilder.AddAzureKeyVault(...)` behind an opt-in config flag (`Secrets:Provider`). Document for AWS via `SecretsManagerConfigurationProvider`.
 
-#### Patch Operations (MEDIUM PRIORITY)
-**Issue**: Simplified PATCH implementation missing complex path support
-**Location**: `src/SCIMServer.Web/Controllers/UsersController.cs:ApplyPatchOperation`
-**Impact**: Limited PATCH functionality
-**Solution**:
-- Implement proper JSON path parsing
-- Support array filters in paths
-- Handle nested attribute updates
+### SBOM + CI vulnerability scan (MEDIUM)
+**Issue:** No automated dependency scan. NuGet packages aren't pinned; `dotnet list package --vulnerable` is run manually.
+**Solution:** Add a GitHub Action that runs `dotnet list package --vulnerable` on PRs and a weekly `dotnet outdated`. Optionally Snyk or Trivy.
 
-### 3. Build Warnings to Fix
+### Per-token rate limit override (LOW)
+**Issue:** All `scim`-policy traffic shares one bucket shape (200 cap, +100/10s). Some integrations need higher.
+**Solution:** Store a token's permit rate alongside its hash; rate limiter partitions on the token id + reads its tier.
 
-#### Warning CS8605: Unboxing Possibly Null Value
-**Location**: `src/SCIMServer.Web/Services/SetupService.cs` (lines 76, 90)
-**Solution**: Add null checks before unboxing
+### Audit log retention + rotation (LOW)
+**Issue:** `AuditLogs` grows unbounded.
+**Solution:** Background job that archives rows older than N days to a partitioned table, then truncates. Configurable retention.
 
-#### Warning CS1998: Async Method Without Await
-**Locations**:
-- `src/SCIMServer.Web/Pages/Tokens.razor` (line 232)
-- `src/SCIMServer.Web/Pages/UserGeneration.razor` (line 189)
-**Solution**: Either add await or make methods synchronous
+---
 
-#### Warning CS0414: Unused Field
-**Location**: `src/SCIMServer.Web/Pages/Configuration.razor` (line 200)
-**Field**: `testingConnection`
-**Solution**: Remove unused field or implement its usage
+## Open — feature gaps
 
-## Performance Improvements
+### SCIM `/Bulk` endpoint (MEDIUM)
+**Issue:** Bulk operations endpoint not implemented.
+**Solution:** Standard SCIM 2.0 Bulk envelope. Requires a multi-operation transaction in `UserRepository` / `GroupRepository`.
 
-### 1. Database Query Optimization
-**Issue**: N+1 query problem in `LoadUserRelatedDataAsync`
-**Location**: `src/SCIMServer.DataAccess/Repositories/UserRepository.cs`
-**Solution**:
-- Use SQL JOINs or single query with multiple result sets
-- Implement batch loading for related data
-- Add database indexes on foreign keys
+### Audit log viewer (MEDIUM)
+**Issue:** `/audit-log` page exists but the filter UX is minimal. Hard to investigate a specific user or IP from the portal.
+**Solution:** Pivots by user / IP / action; date-range presets; CSV export.
 
-### 2. Caching Implementation
-**Issue**: No caching layer for frequently accessed data
-**Solution**:
-- Implement IMemoryCache for user lookups
-- Add distributed caching for scalability
-- Cache SCIM schema definitions
+### ARS proxy execution (MEDIUM)
+**Issue:** `/ars/v1/...` accepts and logs but doesn't yet call out to the Active Roles Administration Service.
+**Solution:** PowerShell-via-Management-Shell handoff with a queue, retry, and dead-letter. Currently blocked on a live ARS lab.
 
-### 3. Connection Pooling
-**Issue**: Creating new connections for each operation
-**Solution**:
-- Implement proper connection pooling
-- Use dependency injection for connection management
-- Add connection resiliency
+### Group nesting (LOW)
+**Issue:** Group-of-group membership isn't modeled; the SCIM `members` array currently accepts user references only.
+**Solution:** Allow `value` to reference a Group; resolve recursively on read; cap depth.
 
-## Code Quality Improvements
+### OpenAPI / Swagger (LOW)
+**Issue:** No machine-readable API description.
+**Solution:** `Swashbuckle.AspNetCore`. SCIM controllers need filters that strip the `[Route]`-merging trick the SCIM spec needs.
 
-### 1. Exception Handling
-**Issue**: Generic try-catch blocks without proper logging
-**Locations**: Throughout controllers and services
-**Solution**:
-- Implement structured exception handling
-- Add detailed logging with context
-- Create custom exception types
+---
 
-### 2. Input Validation
-**Issue**: Limited validation on incoming requests
-**Solution**:
-- Add FluentValidation or DataAnnotations
-- Validate SCIM schema compliance
-- Implement business rule validation
+## Open — operational / polish
 
-### 3. Documentation
-**Issue**: Missing XML documentation for public APIs
-**Solution**:
-- Add XML comments to all public methods
-- Generate API documentation
-- Create developer guide
+- **Page titles** — Blazor pages all render with the default `<PageTitle>` tag set per-page, but a couple still show generic strings. Sweep for consistency.
+- **Favicon** — using the default ASP.NET icon. A simple SVG would carry better in screenshots.
+- **CHANGELOG.md** — not yet maintained at the top level. Consider adopting Keep-A-Changelog style.
+- **Test coverage** — unit tests aren't part of this repo today. Integration smoke tests via a separate test project would be the next add.
+- **Google Workspace emulator** — separate project (`SCIMServer.Emulator.GoogleWorkspace`) currently has to be started by hand. Either start it from the same compose or document it more prominently.
 
-### 4. Unit Testing
-**Issue**: No test projects in solution
-**Solution**:
-- Add xUnit test projects
-- Implement unit tests for repositories
-- Add integration tests for API endpoints
-- Achieve >80% code coverage
+---
 
-## Architecture Enhancements
+## Architecture notes worth being aware of
 
-### 1. Separation of Concerns
-**Current Issue**: Business logic mixed with data access
-**Proposed Solution**:
-```
-SCIMServer.Domain/        # New project for domain logic
-  ├── Services/
-  ├── Validators/
-  └── Specifications/
-```
-
-### 2. Dependency Injection
-**Issue**: Some services created manually
-**Solution**:
-- Register all services in DI container
-- Use IOptions pattern for configuration
-- Implement service interfaces
-
-### 3. Logging Infrastructure
-**Issue**: Minimal logging implementation
-**Solution**:
-- Implement Serilog for structured logging
-- Add correlation IDs for request tracking
-- Configure log levels per environment
-
-## Missing SCIM Endpoints
-
-### 1. Bulk Operations
-**Endpoint**: `/scim/v2/Bulk`
-**Purpose**: Process multiple operations in single request
-**Priority**: Medium
-
-### 2. Schema Discovery
-**Endpoint**: `/scim/v2/Schemas`
-**Purpose**: Discover supported schemas
-**Priority**: Low
-
-### 3. Resource Types
-**Endpoint**: `/scim/v2/ResourceTypes`
-**Purpose**: Discover supported resource types
-**Priority**: Low
-
-### 4. Service Provider Configuration
-**Endpoint**: `/scim/v2/ServiceProviderConfig`
-**Purpose**: Discover service capabilities
-**Priority**: Medium
-
-## Database Schema Issues
-
-### 1. Schema Mismatch — RESOLVED
-**Status**: `Database/CreateDatabase.sql` is now the single canonical bootstrap
-schema. It is embedded into `SCIMServer.DataAccess.dll` and loaded by
-`DatabaseInitializer.GetInitialSchemaScript()`. The old inline C# schema has
-been removed. Incremental changes go in `DatabaseMigrator`.
-
-### 2. Missing Indexes
-**Tables Needing Indexes**:
-- Users: userName, externalId
-- UserEmails: userId, value
-- Groups: displayName
-- GroupMembers: groupId, memberId
-
-### 3. Audit Trail
-**Issue**: Basic audit logging without detailed changes
-**Solution**:
-- Implement change tracking
-- Store before/after values
-- Add user context to audit logs
-
-## UI/UX Improvements
-
-### 1. Error Messages
-**Issue**: Generic error messages shown to users
-**Solution**:
-- Implement user-friendly error messages
-- Add error recovery suggestions
-- Localize error messages
-
-### 2. Loading States
-**Issue**: No loading indicators for async operations
-**Solution**:
-- Add loading spinners
-- Implement progress bars for bulk operations
-- Show operation status
-
-### 3. Responsive Design
-**Issue**: Limited mobile responsiveness
-**Solution**:
-- Improve mobile layouts
-- Add touch-friendly controls
-- Test on various screen sizes
-
-## Deployment and Operations
-
-### 1. Health Checks
-**Missing**: No health check endpoints
-**Solution**:
-- Add /health endpoint
-- Implement database connectivity check
-- Add dependency health checks
-
-### 2. Metrics and Monitoring
-**Missing**: No metrics collection
-**Solution**:
-- Add Prometheus metrics
-- Implement performance counters
-- Add APM integration
-
-### 3. Configuration Management
-**Issue**: Configuration mixed with code
-**Solution**:
-- Externalize all configuration
-- Support multiple environments
-- Add configuration validation on startup
-
-## Priority Matrix
-
-### Immediate (This Sprint)
-1. Fix JWT security configuration
-2. Fix CORS policy
-3. Fix build warnings
-4. Add input validation
-
-### Short Term (Next 2 Sprints)
-1. Implement Groups API controller
-2. Add SCIM filtering support
-3. Fix PATCH operations
-4. Add basic unit tests
-
-### Medium Term (Next Quarter)
-1. Performance optimizations
-2. Complete SCIM endpoint implementation
-3. Comprehensive testing
-4. Documentation completion
-
-### Long Term (Next 6 Months)
-1. Architecture refactoring
-2. Microservices consideration
-3. Advanced features (webhooks, events)
-4. Enterprise features (multi-tenancy)
-
-## Implementation Checklist
-
-- [ ] Security fixes
-  - [ ] JWT configuration
-  - [ ] CORS policy
-  - [ ] HTTPS enforcement
-  - [ ] Input validation
-- [ ] Core functionality
-  - [ ] Groups API controller
-  - [ ] SCIM filtering
-  - [ ] PATCH operations
-  - [ ] Bulk operations
-- [ ] Code quality
-  - [ ] Fix build warnings
-  - [ ] Exception handling
-  - [ ] Logging infrastructure
-  - [ ] Unit tests
-- [ ] Performance
-  - [ ] Query optimization
-  - [ ] Caching layer
-  - [ ] Connection pooling
-- [ ] Operations
-  - [ ] Health checks
-  - [ ] Metrics
-  - [ ] Configuration management
-  - [ ] Deployment automation
-
-## Success Metrics
-
-- **Security**: Pass security audit with no critical findings
-- **Performance**: <100ms average response time for GET requests
-- **Reliability**: 99.9% uptime SLA
-- **Quality**: >80% test coverage, 0 critical bugs
-- **Compliance**: Full SCIM 2.0 compliance certification
-- **Usability**: <5 minute setup time for new installations
+- **Cookie auth + Blazor `<NotAuthorized>`** — returns 200 with a client-side JS redirect to `/login` (not a true 302). Works, but unusual; some HTTP scanners may flag.
+- **`SmartAuth` policy scheme** — picks Cookie vs JWT per-request from the Authorization header. The `scim_*` flow is short-circuited by `ApiTokenAuthMiddleware` before either scheme runs, so token validation is in the middleware rather than an `AuthenticationHandler`. This is intentional (lets us write the failure response shape we want) but means the conventional "Add a custom AuthenticationHandler" pattern doesn't apply.
+- **Migrations are forward-only** — `DatabaseMigrator` has no down scripts. Rolling back a deployment requires restoring from backup; the schema diff itself is rebuilt on the next forward run.
