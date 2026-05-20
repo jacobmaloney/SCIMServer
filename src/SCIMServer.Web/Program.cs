@@ -169,7 +169,11 @@ builder.Services.AddScoped<SCIMServer.Core.Services.UserGenerationService>();
 builder.Services.AddSingleton<ApplicationLogService>();
 builder.Services.AddSingleton<GenerationService>();
 builder.Services.AddSingleton<DataChangeNotifier>();
-builder.Services.AddSingleton<LoginThrottle>();
+// LoginThrottle reads/writes the DB on every check — Scoped so it can take the
+// DatabaseConfig the rest of the data layer uses. Pruner is a hosted background
+// service that keeps the throttle tables bounded.
+builder.Services.AddScoped<LoginThrottle>();
+builder.Services.AddHostedService<LoginThrottlePruner>();
 builder.Services.AddHostedService<StartupService>();
 
 // CORS is driven by Cors:AllowedOrigins in configuration. If no origins are

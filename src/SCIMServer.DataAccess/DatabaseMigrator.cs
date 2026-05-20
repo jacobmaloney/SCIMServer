@@ -448,6 +448,51 @@ END;
 "
             });
 
+            // Migration 9 (v11): Persistent brute-force protection state. Replaces the
+            // in-memory LoginThrottle so failure counters survive process restarts and
+            // multiple processes (eventually) can share the same lockout view.
+            //
+            // LoginAttempts is a rolling-window log of every attempt (success or failure)
+            // per (UsernameLower, IpAddress). LoginLockouts records active hard-lockouts;
+            // a row's LockedUntil is the wall-clock time at which the bucket reopens.
+            migrations.Add(new SchemaMigration
+            {
+                Version = 11,
+                Name = "LoginAttempts + LoginLockouts",
+                Description = "Persistent brute-force protection state — survives restarts.",
+                SqlScript = @"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'LoginAttempts')
+BEGIN
+    CREATE TABLE [dbo].[LoginAttempts] (
+        [Id]            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        [UsernameLower] NVARCHAR(256)    NOT NULL,
+        [IpAddress]     NVARCHAR(64)     NOT NULL,
+        [AttemptedAt]   DATETIME2        NOT NULL CONSTRAINT [DF_LoginAttempts_AttemptedAt] DEFAULT SYSUTCDATETIME(),
+        [Success]       BIT              NOT NULL,
+        CONSTRAINT [PK_LoginAttempts] PRIMARY KEY CLUSTERED ([Id])
+    );
+    CREATE INDEX [IX_LoginAttempts_UserIpTime]
+        ON [LoginAttempts]([UsernameLower], [IpAddress], [AttemptedAt] DESC)
+        INCLUDE ([Success]);
+    CREATE INDEX [IX_LoginAttempts_AttemptedAt]
+        ON [LoginAttempts]([AttemptedAt]);
+END;
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'LoginLockouts')
+BEGIN
+    CREATE TABLE [dbo].[LoginLockouts] (
+        [UsernameLower] NVARCHAR(256)    NOT NULL,
+        [IpAddress]     NVARCHAR(64)     NOT NULL,
+        [LockedUntil]   DATETIME2        NOT NULL,
+        [LockedAt]      DATETIME2        NOT NULL CONSTRAINT [DF_LoginLockouts_LockedAt] DEFAULT SYSUTCDATETIME(),
+        [FailureCount]  INT              NOT NULL CONSTRAINT [DF_LoginLockouts_FailureCount] DEFAULT 0,
+        CONSTRAINT [PK_LoginLockouts] PRIMARY KEY CLUSTERED ([UsernameLower], [IpAddress])
+    );
+    CREATE INDEX [IX_LoginLockouts_LockedUntil] ON [LoginLockouts]([LockedUntil]);
+END;
+"
+            });
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }

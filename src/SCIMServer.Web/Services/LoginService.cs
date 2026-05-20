@@ -45,7 +45,7 @@ namespace SCIMServer.Web.Services
             var key = lookup.ToLowerInvariant();
 
             // Pre-check throttle so a locked account doesn't even reach the hasher.
-            var gate = _throttle.CheckAllowed(key, ipAddress);
+            var gate = await _throttle.CheckAllowedAsync(key, ipAddress);
             if (!gate.Allowed)
             {
                 _logger.LogWarning("Login locked: '{UserName}' from {Ip} — too many failures ({Count}), retry in {Sec}s",
@@ -62,14 +62,14 @@ namespace SCIMServer.Web.Services
                     || string.IsNullOrEmpty(admin.PasswordHash) || string.IsNullOrEmpty(admin.PasswordSalt)
                     || !PasswordHasher.Verify(password, admin.PasswordHash, admin.PasswordSalt))
                 {
-                    var failures = _throttle.RegisterFailure(key, ipAddress);
+                    var failures = await _throttle.RegisterFailureAsync(key, ipAddress);
                     _logger.LogWarning("Login rejected for '{UserName}' from {Ip} (failure {N})", lookup, ipAddress, failures);
                     await SafeAudit("Login.Failed", lookup, ipAddress, 401,
                         details: $"Failure #{failures} within window.");
                     return LoginOutcome.BadCredentials();
                 }
 
-                _throttle.RegisterSuccess(key, ipAddress);
+                await _throttle.RegisterSuccessAsync(key, ipAddress);
                 await _admins.MarkLoggedInAsync(admin.Id);
                 _logger.LogInformation("Portal admin login OK for '{UserName}' from {Ip}", admin.UserName, ipAddress);
                 await SafeAudit("Login.Succeeded", admin.UserName, ipAddress, 200, userId: admin.Id.ToString());
