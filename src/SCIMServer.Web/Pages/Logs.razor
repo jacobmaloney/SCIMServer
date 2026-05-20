@@ -156,7 +156,7 @@
         await RefreshLogs();
     }
 
-    private async Task RefreshLogs()
+    private Task RefreshLogs()
     {
         loading = true;
         
@@ -183,12 +183,13 @@
             loading = false;
             StateHasChanged();
         }
+        return Task.CompletedTask;
     }
 
-    private async Task ClearLogs()
+    private Task ClearLogs()
     {
         ApplicationLogService.ClearLogs();
-        await RefreshLogs();
+        return RefreshLogs();
     }
 
     private void ToggleAutoRefresh()

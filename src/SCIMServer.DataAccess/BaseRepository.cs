@@ -79,7 +79,7 @@ namespace SCIMServer.DataAccess
         /// <param name="sql">The SQL query</param>
         /// <param name="param">Query parameters</param>
         /// <returns>Scalar result</returns>
-        protected async Task<T> ExecuteScalarAsync<T>(string sql, object? param = null)
+        protected async Task<T?> ExecuteScalarAsync<T>(string sql, object? param = null)
         {
             using var connection = CreateConnection();
             return await connection.ExecuteScalarAsync<T>(sql, param, commandTimeout: _config.CommandTimeout);

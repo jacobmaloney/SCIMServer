@@ -454,7 +454,7 @@ namespace SCIMServer.Core.Services
                 {
                     Name = $"{dept.Key} Team",
                     Description = $"All members of the {dept.Key} department",
-                    GroupType = "Department",
+                    Type = "Department",
                     MemberIds = dept.Select(u => u.Id).ToList()
                 };
                 groups.Add(group);
@@ -477,7 +477,7 @@ namespace SCIMServer.Core.Services
                 {
                     Name = $"{loc.Key} Office",
                     Description = $"All employees in {loc.Key}",
-                    GroupType = "Location",
+                    Type = "Location",
                     MemberIds = loc.Select(u => u.Id).ToList()
                 };
                 groups.Add(group);
@@ -501,7 +501,7 @@ namespace SCIMServer.Core.Services
                 {
                     Name = "Managers",
                     Description = "All people managers",
-                    GroupType = "Role",
+                    Type = "Role",
                     MemberIds = managers.Select(u => u.Id).ToList()
                 });
             }
@@ -515,7 +515,7 @@ namespace SCIMServer.Core.Services
                 {
                     Name = "Leadership Team",
                     Description = "Executive leadership team",
-                    GroupType = "Role",
+                    Type = "Role",
                     MemberIds = executives.Select(u => u.Id).ToList()
                 });
             }
@@ -528,7 +528,7 @@ namespace SCIMServer.Core.Services
                 {
                     Name = "Remote Workers",
                     Description = "All remote employees",
-                    GroupType = "Role",
+                    Type = "Role",
                     MemberIds = remoteWorkers.Select(u => u.Id).ToList()
                 });
             }
