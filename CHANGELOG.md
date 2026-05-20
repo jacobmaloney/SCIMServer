@@ -4,6 +4,12 @@ All notable changes to SCIMServer. Format roughly follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added — persistent brute-force throttle + CI
+- Migration **v11**: `LoginAttempts` + `LoginLockouts` tables. `LoginThrottle` rewritten as a SQL-backed Scoped service — failure counters survive restarts. Fails open on DB outage so a SQL blip doesn't lock everyone out.
+- `LoginThrottlePruner` background service trims old rows every 30 min.
+- GitHub Actions: `build.yml` (Release with `/warnaserror`) and `security.yml` (weekly + PR + push vulnerability scan via `dotnet list package --vulnerable` + `dependency-review-action`).
+- Cleared the last CS1998 warnings in `SCIMServer.Installer` so `/warnaserror` is clean across the whole solution.
+
 ### Added — security hardening pass
 - Rate limiting with four named policies (`auth`, `scim`, `anon`, plus a per-IP global fallback). `Retry-After` + JSON envelope on 429.
 - `LoginThrottle` — per-(user, IP) sliding-window soft-delay + hard lockout. Login page returns 429.

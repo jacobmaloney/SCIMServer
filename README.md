@@ -4,7 +4,7 @@ A small, opinionated, security-hardened SCIM 2.0 server you can run on a laptop.
 
 The intent is to stand up a believable provisioning target in five minutes — for demoing Entra ID, Okta, ARS, or any other identity source — without having to learn anyone's SaaS console.
 
-![SCIM 2.0](https://img.shields.io/badge/SCIM-2.0-10b981) ![.NET 8](https://img.shields.io/badge/.NET-8-512bd4) ![Blazor Server](https://img.shields.io/badge/Blazor-Server-512bd4) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+[![build](https://github.com/jacobmaloney/SCIMServer/actions/workflows/build.yml/badge.svg)](https://github.com/jacobmaloney/SCIMServer/actions/workflows/build.yml) [![security](https://github.com/jacobmaloney/SCIMServer/actions/workflows/security.yml/badge.svg)](https://github.com/jacobmaloney/SCIMServer/actions/workflows/security.yml) ![SCIM 2.0](https://img.shields.io/badge/SCIM-2.0-10b981) ![.NET 8](https://img.shields.io/badge/.NET-8-512bd4) ![Blazor Server](https://img.shields.io/badge/Blazor-Server-512bd4) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
 ---
 
@@ -25,7 +25,7 @@ This server is intended to pass routine pen-test sweeps out of the box. Hardenin
 
 | Concern | Defence |
 |---|---|
-| Brute-force on `/login` | Per-(user, IP) sliding-window throttle: soft delay after 5 failures, 15-min hard lockout after 10. Returns `429 + Retry-After`. Events go to the audit log. |
+| Brute-force on `/login` | Per-(user, IP) sliding-window throttle backed by SQL — failure counters survive process restarts. Soft delay after 5 failures, 15-min hard lockout after 10. Returns `429 + Retry-After`. Events go to the audit log. Background pruner trims old rows on a timer. |
 | Brute-force on API tokens | Per-IP `auth` rate-limit policy (10/min) on the login + token-mint routes; per-token bucket on the API surface (200 token bucket, refills 100/10s). |
 | DDoS / slow-loris | Kestrel `MaxConcurrentConnections`, `MaxRequestBodySize 256KB`, `KeepAliveTimeout 60s`, `RequestHeadersTimeout 15s`, `Min*DataRate 100 B/s` with grace. |
 | Clickjacking / MIME sniff / framing | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Resource-Policy: same-origin`. |
@@ -41,10 +41,9 @@ This server is intended to pass routine pen-test sweeps out of the box. Hardenin
 | Portal lockout | Portal admin accounts live in a **separate `PortalAdmins` table** from SCIM `Users`. No data operation against `Users` can invalidate the portal login. |
 
 Documented exclusions (don't run this in production without addressing these):
-- No persisted brute-force throttle (in-memory; process restart resets the counter).
 - No external secret management — `Jwt:SecretKey` is read from local config.
 - No client-cert pinning for outbound HTTP. The SQL emulator and ARS proxy targets connect with the credentials in config.
-- No CI vulnerability scan or SBOM in this repo today.
+- CI vulnerability scan ships (`.github/workflows/security.yml` — weekly + per-PR `dotnet list package --vulnerable` + GitHub `dependency-review-action`); no SBOM artifact yet.
 
 See [`docs/ISSUES_AND_IMPROVEMENTS.md`](docs/ISSUES_AND_IMPROVEMENTS.md) for the full list.
 
@@ -229,6 +228,7 @@ The schema is managed by `SCIMServer.DataAccess.DatabaseMigrator` — no EF Core
 - **v6 (v8)** — multi-tenant Tenants table + per-row `TenantId`
 - **v7 (v9)** — `SqlAccounts` table for the `/sql/v1/` emulator
 - **v10** — **PortalAdmins** table separation: portal/web-UI admin accounts move out of `Users` so SCIM data ops can never lock the operator out
+- **v11** — `LoginAttempts` + `LoginLockouts` tables for the persistent brute-force throttle
 
 Migrations are idempotent; running them against an already-current database is a no-op.
 
@@ -254,7 +254,6 @@ The page title shows **the active connection** on every page, the sidebar shows 
 Honest list. See [`docs/ISSUES_AND_IMPROVEMENTS.md`](docs/ISSUES_AND_IMPROVEMENTS.md) for detail.
 
 - **Bulk operations** — `/scim/v2/Bulk` endpoint is on the roadmap, not shipped.
-- **Persisted brute-force counters** — in-memory today; restart resets.
 - **Audit log surface** — events are written to the DB but the UI viewer is minimal.
 - **Google Workspace emulator** — separate ASP.NET project (`SCIMServer.Emulator.GoogleWorkspace`), not started by the main process. Has its own Admin SDK-style endpoints + OAuth2 service-account token flow.
 - **ARS proxy execution** — `/ars/v1/...` accepts and logs requests; PowerShell handoff to the live Administration Service is the next iteration.

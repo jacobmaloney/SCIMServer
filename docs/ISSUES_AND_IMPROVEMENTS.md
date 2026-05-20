@@ -23,22 +23,20 @@ Honest log of what's still open. Items marked **resolved** stay in the file with
 - ✅ **Kestrel hardening** — MaxConcurrentConnections, MaxRequestBodySize 256KB, header size caps, KeepAlive/RequestHeaders timeouts, Min*DataRate against slow-loris.
 - ✅ **PBKDF2 cost** — iterations bumped 100k → 600k (OWASP 2023). `Verify` accepts both costs so existing hashes still work.
 - ✅ **Token sprawl** — `CreateTokenAsync` defaults a 90-day expiration when caller passes null. Fixed-value demo tokens intentionally remain non-expiring.
+- ✅ **Persistent brute-force throttle** — migration v11 added `LoginAttempts` + `LoginLockouts` tables. `LoginThrottle` is now SQL-backed; counters survive process restarts. Fails open on DB outage. `LoginThrottlePruner` background service trims old rows on a 30-min timer.
+- ✅ **CI vulnerability scan** — `.github/workflows/security.yml` runs `dotnet list package --vulnerable` weekly and on every PR / push; PRs also get GitHub's `dependency-review-action` at `fail-on-severity: high`. Build workflow enforces `/warnaserror` so new warnings can't sneak in.
 
 ---
 
 ## Open — security
 
-### Persistent brute-force throttle (MEDIUM)
-**Issue:** `LoginThrottle` lives in-process. A restart resets failure counters.
-**Solution:** Move the bucket state to a `LoginAttempts` table — same sliding-window semantics, durable across restarts. Cheaper than it sounds since each lookup is keyed by (UsernameLower, IpAddress).
-
 ### External secret management (MEDIUM)
 **Issue:** `Jwt:SecretKey` is read from local `appsettings.json` / env. There's no integration with Key Vault, AWS Secrets Manager, or a sidecar.
 **Solution:** Add `IConfigurationBuilder.AddAzureKeyVault(...)` behind an opt-in config flag (`Secrets:Provider`). Document for AWS via `SecretsManagerConfigurationProvider`.
 
-### SBOM + CI vulnerability scan (MEDIUM)
-**Issue:** No automated dependency scan. NuGet packages aren't pinned; `dotnet list package --vulnerable` is run manually.
-**Solution:** Add a GitHub Action that runs `dotnet list package --vulnerable` on PRs and a weekly `dotnet outdated`. Optionally Snyk or Trivy.
+### SBOM artifact (LOW)
+**Issue:** Build doesn't publish an SBOM. The CI vuln scan covers most of what an SBOM gives you, but procurement audits sometimes want a CycloneDX or SPDX artifact.
+**Solution:** Add `dotnet CycloneDX` step to `build.yml` that publishes `bom.xml` as a workflow artifact.
 
 ### Per-token rate limit override (LOW)
 **Issue:** All `scim`-policy traffic shares one bucket shape (200 cap, +100/10s). Some integrations need higher.
