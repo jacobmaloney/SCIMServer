@@ -111,7 +111,7 @@ namespace SCIMServer.Installer.Steps
         /// <summary>
         /// Gets SQL Express connection string
         /// </summary>
-        private async Task<string> GetSqlExpressConnectionString()
+        private Task<string> GetSqlExpressConnectionString()
         {
             Console.WriteLine();
             Console.WriteLine("Enter SQL Server Express instance name (default: .\\SQLEXPRESS):");
@@ -119,50 +119,48 @@ namespace SCIMServer.Installer.Steps
             var instance = Console.ReadLine();
             if (string.IsNullOrWhiteSpace(instance))
                 instance = ".\\SQLEXPRESS";
-            
-            return $"Server={instance};Database=SCIMServer;Trusted_Connection=True;";
+
+            return Task.FromResult($"Server={instance};Database=SCIMServer;Trusted_Connection=True;");
         }
 
         /// <summary>
         /// Gets SQL Server connection string
         /// </summary>
-        private async Task<string> GetSqlServerConnectionString()
+        private Task<string> GetSqlServerConnectionString()
         {
             Console.WriteLine();
             Console.WriteLine("Enter SQL Server name:");
             Console.Write("> ");
             var server = Console.ReadLine() ?? "localhost";
-            
+
             Console.WriteLine("Use Windows Authentication? (Y/N):");
             var winAuth = Console.ReadKey(true).Key == ConsoleKey.Y;
-            
+
             if (winAuth)
             {
-                return $"Server={server};Database=SCIMServer;Trusted_Connection=True;";
+                return Task.FromResult($"Server={server};Database=SCIMServer;Trusted_Connection=True;");
             }
-            else
-            {
-                Console.WriteLine("Enter username:");
-                Console.Write("> ");
-                var username = Console.ReadLine() ?? "sa";
-                
-                Console.WriteLine("Enter password:");
-                Console.Write("> ");
-                var password = ReadPassword();
-                
-                return $"Server={server};Database=SCIMServer;User Id={username};Password={password};";
-            }
+
+            Console.WriteLine("Enter username:");
+            Console.Write("> ");
+            var username = Console.ReadLine() ?? "sa";
+
+            Console.WriteLine("Enter password:");
+            Console.Write("> ");
+            var password = ReadPassword();
+
+            return Task.FromResult($"Server={server};Database=SCIMServer;User Id={username};Password={password};");
         }
 
         /// <summary>
         /// Gets custom connection string
         /// </summary>
-        private async Task<string> GetCustomConnectionString()
+        private Task<string> GetCustomConnectionString()
         {
             Console.WriteLine();
             Console.WriteLine("Enter connection string:");
             Console.Write("> ");
-            return Console.ReadLine() ?? "";
+            return Task.FromResult(Console.ReadLine() ?? "");
         }
 
         /// <summary>

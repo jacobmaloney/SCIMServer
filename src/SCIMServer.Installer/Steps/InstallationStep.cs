@@ -25,11 +25,12 @@ namespace SCIMServer.Installer.Steps
             try
             {
                 // Step 1: Create installation directory
-                await InstallStep("Creating installation directory", async () =>
+                await InstallStep("Creating installation directory", () =>
                 {
                     Directory.CreateDirectory(context.InstallPath);
                     Directory.CreateDirectory(Path.Combine(context.InstallPath, "logs"));
                     Directory.CreateDirectory(Path.Combine(context.InstallPath, "config"));
+                    return Task.CompletedTask;
                 });
                 
                 // Step 2: Copy application files
