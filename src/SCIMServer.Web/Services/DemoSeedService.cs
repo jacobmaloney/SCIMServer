@@ -8,10 +8,12 @@ using SCIMServer.DataAccess.Repositories;
 namespace SCIMServer.Web.Services
 {
     /// <summary>
-    /// Idempotently provisions the conference demo: two Connected Systems
-    /// (Kodak — Entra ID Staging, Internal App Demo), 25 users + 5 groups in
-    /// the Kodak system including the SOD trap pair, and four fixed-value API
-    /// tokens with known raw values for engineer convenience. Safe to re-run.
+    /// Idempotently provisions the conference demo: three Connected Systems
+    /// (IT Helpdesk Portal, Finance Suite, HR Connect) for the ARS attribute-
+    /// based provisioning demo, with seed users + groups in IT Helpdesk Portal
+    /// including the SOD trap pair, and five fixed-value API tokens (one per
+    /// system + admin + ARS proxy) with known raw values for engineer
+    /// convenience. Safe to re-run.
     /// </summary>
     public class DemoSeedService
     {
@@ -48,80 +50,91 @@ namespace SCIMServer.Web.Services
             var tokenCreated = 0;
 
             // ─── Connected Systems ────────────────────────────────────────────
-            var kodak = await EnsureTenant("Kodak — Entra ID Staging", "kodak-entraid",
+            // Three department-based apps for the Unite 2026 ARS attribute-based
+            // provisioning demo. IT Helpdesk Portal carries the SOD trap pair +
+            // representative users / groups; Finance Suite and HR Connect are
+            // empty targets that ARS workflows provision into during the demo.
+            var itHelpdesk = await EnsureTenant("IT Helpdesk Portal", "it-helpdesk",
                 "Conference demo system — SOD conflict users pre-loaded",
-                "Emulator", "kodak.onmicrosoft.com", notes, sysCreated);
+                "Emulator", "it.demo.local", notes, sysCreated);
 
-            var internalApp = await EnsureTenant("Internal App Demo", "internal-app",
-                "Generic REST app emulator for provisioning demo",
-                "Emulator", null, notes, sysCreated);
+            var financeSuite = await EnsureTenant("Finance Suite", "finance-suite",
+                "Demo target for finance app provisioning",
+                "Emulator", "finance.demo.local", notes, sysCreated);
 
-            // ─── Users in Kodak ───────────────────────────────────────────────
-            var kodakUsers = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+            var hrConnect = await EnsureTenant("HR Connect", "hr-connect",
+                "Demo target for HR app provisioning",
+                "Emulator", "hr.demo.local", notes, sysCreated);
+
+            // ─── Users in IT Helpdesk Portal ──────────────────────────────────
+            var itUsers = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
             // Finance — 5. ap.user1 and ar.user1 are the SOD pair; sod.conflict is in both groups.
             foreach (var u in new[]
             {
-                new SeedUser("ap.user1",      "AP",  "User1",   "ap.user1@kodak.onmicrosoft.com",      "Finance"),
-                new SeedUser("ar.user1",      "AR",  "User1",   "ar.user1@kodak.onmicrosoft.com",      "Finance"),
-                new SeedUser("sod.conflict",  "SOD", "Conflict","sod.conflict@kodak.onmicrosoft.com",  "Finance"),
-                new SeedUser("fin.user2",     "Pat", "Morgan",  "fin.user2@kodak.onmicrosoft.com",     "Finance"),
-                new SeedUser("fin.user3",     "Sam", "Lee",     "fin.user3@kodak.onmicrosoft.com",     "Finance"),
+                new SeedUser("ap.user1",      "AP",  "User1",   "ap.user1@it.demo.local",      "Finance"),
+                new SeedUser("ar.user1",      "AR",  "User1",   "ar.user1@it.demo.local",      "Finance"),
+                new SeedUser("sod.conflict",  "SOD", "Conflict","sod.conflict@it.demo.local",  "Finance"),
+                new SeedUser("fin.user2",     "Pat", "Morgan",  "fin.user2@it.demo.local",     "Finance"),
+                new SeedUser("fin.user3",     "Sam", "Lee",     "fin.user3@it.demo.local",     "Finance"),
             })
             {
-                kodakUsers[u.UserName] = await EnsureUser(kodak.Id, u, notes, userCreated);
+                itUsers[u.UserName] = await EnsureUser(itHelpdesk.Id, u, notes, userCreated);
             }
 
             // Engineering — 8
             for (int i = 1; i <= 8; i++)
             {
-                var u = new SeedUser($"eng.user{i}", $"Eng{i}", "Doe", $"eng.user{i}@kodak.onmicrosoft.com", "Engineering");
-                kodakUsers[u.UserName] = await EnsureUser(kodak.Id, u, notes, userCreated);
+                var u = new SeedUser($"eng.user{i}", $"Eng{i}", "Doe", $"eng.user{i}@it.demo.local", "Engineering");
+                itUsers[u.UserName] = await EnsureUser(itHelpdesk.Id, u, notes, userCreated);
             }
 
             // HR — 4
             for (int i = 1; i <= 4; i++)
             {
-                var u = new SeedUser($"hr.user{i}", $"HR{i}", "Smith", $"hr.user{i}@kodak.onmicrosoft.com", "HR");
-                kodakUsers[u.UserName] = await EnsureUser(kodak.Id, u, notes, userCreated);
+                var u = new SeedUser($"hr.user{i}", $"HR{i}", "Smith", $"hr.user{i}@it.demo.local", "HR");
+                itUsers[u.UserName] = await EnsureUser(itHelpdesk.Id, u, notes, userCreated);
             }
 
             // IT — 5
             for (int i = 1; i <= 5; i++)
             {
-                var u = new SeedUser($"it.user{i}", $"IT{i}", "Brown", $"it.user{i}@kodak.onmicrosoft.com", "IT");
-                kodakUsers[u.UserName] = await EnsureUser(kodak.Id, u, notes, userCreated);
+                var u = new SeedUser($"it.user{i}", $"IT{i}", "Brown", $"it.user{i}@it.demo.local", "IT");
+                itUsers[u.UserName] = await EnsureUser(itHelpdesk.Id, u, notes, userCreated);
             }
 
             // Operations — 3
             for (int i = 1; i <= 3; i++)
             {
-                var u = new SeedUser($"ops.user{i}", $"Ops{i}", "Jones", $"ops.user{i}@kodak.onmicrosoft.com", "Operations");
-                kodakUsers[u.UserName] = await EnsureUser(kodak.Id, u, notes, userCreated);
+                var u = new SeedUser($"ops.user{i}", $"Ops{i}", "Jones", $"ops.user{i}@it.demo.local", "Operations");
+                itUsers[u.UserName] = await EnsureUser(itHelpdesk.Id, u, notes, userCreated);
             }
 
-            // ─── Groups in Kodak ──────────────────────────────────────────────
-            var financeAp = await EnsureGroup(kodak.Id, "Finance-AP", "Accounts Payable", notes, groupCreated);
-            var financeAr = await EnsureGroup(kodak.Id, "Finance-AR", "Accounts Receivable", notes, groupCreated);
-            var engDev    = await EnsureGroup(kodak.Id, "Engineering-Dev", "Engineering — development team", notes, groupCreated);
-            var itAdmins  = await EnsureGroup(kodak.Id, "IT-Admins", "IT administrators", notes, groupCreated);
-            var hrTeam    = await EnsureGroup(kodak.Id, "HR-Team", "HR — full team", notes, groupCreated);
+            // ─── Groups in IT Helpdesk Portal ─────────────────────────────────
+            var financeAp = await EnsureGroup(itHelpdesk.Id, "Finance-AP", "Accounts Payable", notes, groupCreated);
+            var financeAr = await EnsureGroup(itHelpdesk.Id, "Finance-AR", "Accounts Receivable", notes, groupCreated);
+            var engDev    = await EnsureGroup(itHelpdesk.Id, "Engineering-Dev", "Engineering — development team", notes, groupCreated);
+            var itAdmins  = await EnsureGroup(itHelpdesk.Id, "IT-Admins", "IT administrators", notes, groupCreated);
+            var hrTeam    = await EnsureGroup(itHelpdesk.Id, "HR-Team", "HR — full team", notes, groupCreated);
 
             // SOD setup
-            memberCreated += await EnsureMembership(financeAp, kodakUsers["ap.user1"]);
-            memberCreated += await EnsureMembership(financeAr, kodakUsers["ar.user1"]);
-            memberCreated += await EnsureMembership(financeAp, kodakUsers["sod.conflict"]);
-            memberCreated += await EnsureMembership(financeAr, kodakUsers["sod.conflict"]);
+            memberCreated += await EnsureMembership(financeAp, itUsers["ap.user1"]);
+            memberCreated += await EnsureMembership(financeAr, itUsers["ar.user1"]);
+            memberCreated += await EnsureMembership(financeAp, itUsers["sod.conflict"]);
+            memberCreated += await EnsureMembership(financeAr, itUsers["sod.conflict"]);
             // Sensible defaults for the rest so the demo doesn't look empty
-            for (int i = 1; i <= 8; i++) memberCreated += await EnsureMembership(engDev, kodakUsers[$"eng.user{i}"]);
-            for (int i = 1; i <= 5; i++) memberCreated += await EnsureMembership(itAdmins, kodakUsers[$"it.user{i}"]);
-            for (int i = 1; i <= 4; i++) memberCreated += await EnsureMembership(hrTeam, kodakUsers[$"hr.user{i}"]);
+            for (int i = 1; i <= 8; i++) memberCreated += await EnsureMembership(engDev, itUsers[$"eng.user{i}"]);
+            for (int i = 1; i <= 5; i++) memberCreated += await EnsureMembership(itAdmins, itUsers[$"it.user{i}"]);
+            for (int i = 1; i <= 4; i++) memberCreated += await EnsureMembership(hrTeam, itUsers[$"hr.user{i}"]);
 
             // ─── API tokens ────────────────────────────────────────────────────
-            tokenCreated += await EnsureToken("kodak-entraid-token", "demo-kodak-2024", kodak.Id, "Tenant",
-                "ARS PowerShell workflows targeting the Kodak demo connected system", notes);
-            tokenCreated += await EnsureToken("internal-app-token", "demo-internal-2024", internalApp.Id, "Tenant",
-                "Generic REST app demo token", notes);
+            // One token per Connected System (Tenant scope, slug-locked) + admin + ARS proxy.
+            tokenCreated += await EnsureToken("it-helpdesk-token", "demo-it-2024", itHelpdesk.Id, "Tenant",
+                "ARS PowerShell workflows targeting IT Helpdesk Portal", notes);
+            tokenCreated += await EnsureToken("finance-suite-token", "demo-finance-2024", financeSuite.Id, "Tenant",
+                "ARS PowerShell workflows targeting Finance Suite", notes);
+            tokenCreated += await EnsureToken("hr-connect-token", "demo-hr-2024", hrConnect.Id, "Tenant",
+                "ARS PowerShell workflows targeting HR Connect", notes);
             tokenCreated += await EnsureToken("admin-token", "admin-scimserver-2024", tenantId: null, "Admin",
                 "Admin token — full access across all connected systems", notes);
             tokenCreated += await EnsureToken("ars-proxy-token", "ars-proxy-2024", tenantId: null, "ArsProxy",

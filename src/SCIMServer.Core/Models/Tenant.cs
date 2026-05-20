@@ -12,10 +12,10 @@ namespace SCIMServer.Core.Models
     {
         public Guid Id { get; set; }
 
-        /// <summary>Display name, e.g. "Kodak — Entra ID Staging".</summary>
+        /// <summary>Display name, e.g. "IT Helpdesk Portal".</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>URL-safe identifier, e.g. "kodak-entraid". Unique.</summary>
+        /// <summary>URL-safe identifier, e.g. "it-helpdesk". Unique.</summary>
         public string Slug { get; set; } = string.Empty;
 
         public string? Description { get; set; }
@@ -23,7 +23,7 @@ namespace SCIMServer.Core.Models
         /// <summary>"Emulator" (amber badge) or "Real" (green badge).</summary>
         public string SystemType { get; set; } = "Emulator";
 
-        /// <summary>Optional domain hint, e.g. "kodak.onmicrosoft.com".</summary>
+        /// <summary>Optional domain hint, e.g. "it.demo.local".</summary>
         public string? Domain { get; set; }
 
         public bool IsActive { get; set; } = true;

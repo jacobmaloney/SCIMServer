@@ -31,7 +31,7 @@ namespace SCIMServer.Web.Services
 
         /// <summary>
         /// Creates a new API token. If <paramref name="fixedRawValue"/> is provided, it is used
-        /// as the raw token value (allowing deterministic demo tokens such as "demo-kodak-2024").
+        /// as the raw token value (allowing deterministic demo tokens such as "demo-it-2024").
         /// The full bearer header is always <c>scim_{value}</c>.
         /// </summary>
         // Tokens minted without an explicit expiration default to this much wall-clock —

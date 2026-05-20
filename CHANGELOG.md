@@ -4,6 +4,12 @@ All notable changes to SCIMServer. Format roughly follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Changed — demo seed
+- Replaced demo Connected Systems (Kodak — Entra ID Staging, Internal App Demo) with three department-based apps for the Unite 2026 ARS attribute-based provisioning demo: **IT Helpdesk Portal** (`it-helpdesk`), **Finance Suite** (`finance-suite`), **HR Connect** (`hr-connect`).
+- Seed users + groups + SOD trap pair now land in IT Helpdesk Portal; Finance Suite and HR Connect are empty targets the ARS workflow provisions into.
+- Fixed-value tokens: `it-helpdesk-token` (`demo-it-2024`), `finance-suite-token` (`demo-finance-2024`), `hr-connect-token` (`demo-hr-2024`) replace the old Kodak / Internal App tokens. `admin-token` and `ars-proxy-token` unchanged.
+- All references to `kodak-entraid` / `demo-kodak-2024` / `internal-app` / `demo-internal-2024` removed from README, ConnectedSystems modal, placeholder text, and code comments.
+
 ### Added — persistent brute-force throttle + CI
 - Migration **v11**: `LoginAttempts` + `LoginLockouts` tables. `LoginThrottle` rewritten as a SQL-backed Scoped service — failure counters survive restarts. Fails open on DB outage so a SQL blip doesn't lock everyone out.
 - `LoginThrottlePruner` background service trims old rows every 30 min.

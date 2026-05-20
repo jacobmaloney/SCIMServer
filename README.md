@@ -66,12 +66,14 @@ The first time, the app sees no configured database and routes you to **`/setup`
 After setup, navigate to **`/connected-systems`** and click **Seed Demo**. You'll get:
 
 - **Default** (slug `default`) — empty, your sandbox
-- **Internal App Demo** (slug `internal-app`) — 25 users, 5 groups
-- **Kodak — Entra ID Staging** (slug `kodak-entraid`) — 25 users, 5 groups, sample domain
-- Four fixed-value tokens (raw values are documented in the Endpoints modal):
+- **IT Helpdesk Portal** (slug `it-helpdesk`, domain `it.demo.local`) — 25 users, 5 groups, includes the SOD trap pair
+- **Finance Suite** (slug `finance-suite`, domain `finance.demo.local`) — empty target for finance app provisioning
+- **HR Connect** (slug `hr-connect`, domain `hr.demo.local`) — empty target for HR app provisioning
+- Five fixed-value tokens (raw values are documented in the Endpoints modal):
   - `admin-token` → Admin scope, can reach any slug
-  - `kodak-entraid-token` → scoped to Kodak slug only
-  - `internal-app-token` → scoped to Internal App slug only
+  - `it-helpdesk-token` → scoped to IT Helpdesk Portal
+  - `finance-suite-token` → scoped to Finance Suite
+  - `hr-connect-token` → scoped to HR Connect
   - `ars-proxy-token` → scoped to the `/ars/v1` surface
 
 That's enough to do every SCIM call against a real server.
@@ -84,7 +86,7 @@ There are **two URL forms** for the SCIM surface and they're functionally identi
 
 | Form | Example | Tenant determined by | When to use |
 |---|---|---|---|
-| **Slug** (recommended) | `/scim/v2/t/kodak-entraid/Users` | The slug in the URL | Real apps. Mistakes are visible at the URL — a leaked token can't be aimed at a different system. |
+| **Slug** (recommended) | `/scim/v2/t/it-helpdesk/Users` | The slug in the URL | Real apps. Mistakes are visible at the URL — a leaked token can't be aimed at a different system. |
 | **Token-only** (legacy) | `/scim/v2/Users` | The bearer token's `TenantId` | Demos. Useful when one client speaks to one connection only. |
 
 When both are present, the URL wins — and a token whose `TenantId` doesn't match the slug returns **403 insufficient_scope** instead of silently re-scoping.
@@ -97,15 +99,15 @@ Every API call wants `Authorization: Bearer scim_<value>`. The raw value is show
 
 **List users in a Connected System** (cURL):
 ```bash
-curl -H "Authorization: Bearer scim_admin-scimserver-2024" \
+curl -H "Authorization: Bearer scim_demo-it-2024" \
      -H "Accept: application/scim+json" \
-     "http://localhost:5000/scim/v2/t/kodak-entraid/Users?count=10"
+     "http://localhost:5000/scim/v2/t/it-helpdesk/Users?count=10"
 ```
 
 **Create a user** (PowerShell):
 ```powershell
 $headers = @{
-    "Authorization" = "Bearer scim_admin-scimserver-2024"
+    "Authorization" = "Bearer scim_demo-it-2024"
     "Content-Type"  = "application/scim+json"
 }
 $body = @{
@@ -117,7 +119,7 @@ $body = @{
 } | ConvertTo-Json -Depth 5
 
 Invoke-RestMethod -Method Post `
-    -Uri "http://localhost:5000/scim/v2/t/kodak-entraid/Users" `
+    -Uri "http://localhost:5000/scim/v2/t/it-helpdesk/Users" `
     -Headers $headers -Body $body
 ```
 
@@ -129,13 +131,13 @@ $body = @{
 } | ConvertTo-Json -Depth 5
 
 Invoke-RestMethod -Method Patch `
-    -Uri "http://localhost:5000/scim/v2/t/kodak-entraid/Users/<user-id>" `
+    -Uri "http://localhost:5000/scim/v2/t/it-helpdesk/Users/<user-id>" `
     -Headers $headers -Body $body
 ```
 
 **Filter by userName**:
 ```
-GET /scim/v2/t/kodak-entraid/Users?filter=userName%20eq%20%22jsmith%22
+GET /scim/v2/t/it-helpdesk/Users?filter=userName%20eq%20%22jsmith%22
 ```
 
 Open any Connected System in the UI → **Endpoints** to get a copy-pasteable cURL + PowerShell example pre-filled with the active slug and token for that system.
