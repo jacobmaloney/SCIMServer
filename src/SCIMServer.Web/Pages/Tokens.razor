@@ -216,28 +216,72 @@
                     @if (!string.IsNullOrEmpty(generatedToken))
                     {
                         <div class="alert alert-success">
-                            <h6 class="alert-heading">Token Created Successfully!</h6>
-                            <p>Copy this token now. You won't be able to see it again.</p>
-                            <div class="input-group mb-2">
-                                <input type="text" class="form-control font-monospace" value="@generatedToken" readonly />
-                                <button class="btn btn-outline-secondary" type="button" @onclick="CopyToken">
-                                    <i class="oi oi-clipboard"></i> Copy
-                                </button>
+                            <h6 class="alert-heading"><i class="oi oi-check"></i> Token created — copy it now.</h6>
+                            <p class="mb-2">The raw value is shown <strong>once</strong>. After this dialog closes only the hash is kept; lose the value and you have to mint a new token.</p>
+
+                            <div class="mb-2">
+                                <small class="text-muted d-block mb-1">Authorization header (this is the full string your client sends):</small>
+                                <div class="input-group">
+                                    <input type="text" id="newTokenHeader" class="form-control font-monospace" value="Bearer @generatedToken" readonly @onclick="SelectAllOnFocus" />
+                                    <button class="btn @(tokenCopied ? "btn-success" : "btn-outline-secondary")" type="button" @onclick="CopyToken">
+                                        <i class="oi oi-clipboard"></i> @(tokenCopied ? "Copied" : "Copy")
+                                    </button>
+                                </div>
                             </div>
-                            <hr>
-                            <p class="mb-0 small">Use this token in the Authorization header: <code>Bearer @generatedToken</code></p>
+
+                            <div class="mb-2">
+                                <small class="text-muted d-block mb-1">Raw value only (if you only need the part after <code>Bearer </code>):</small>
+                                <div class="input-group">
+                                    <input type="text" class="form-control font-monospace" value="@generatedToken" readonly @onclick="SelectAllOnFocus" />
+                                </div>
+                            </div>
+
+                            <hr />
+
+                            <div class="d-flex align-items-center gap-2 mb-2">
+                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="TestNewToken" disabled="@testInFlight">
+                                    @if (testInFlight)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1"></span>
+                                        <span>Testing…</span>
+                                    }
+                                    else
+                                    {
+                                        <i class="oi oi-pulse"></i>
+                                        <span>Test this token now</span>
+                                    }
+                                </button>
+                                <small class="text-muted">Hits <code>/scim/v2/ServiceProviderConfig</code> with this exact header.</small>
+                            </div>
+                            @if (!string.IsNullOrEmpty(testResult))
+                            {
+                                <div class="@(testOk ? "alert alert-success" : "alert alert-danger") py-2 mb-2 small">
+                                    @testResult
+                                </div>
+                            }
+
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="confirmCopied" @bind="confirmCopied" />
+                                <label class="form-check-label" for="confirmCopied">
+                                    I've copied the token somewhere safe.
+                                </label>
+                            </div>
                         </div>
                     }
                 </form>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" @onclick="CloseCreateModal">
-                    @(string.IsNullOrEmpty(generatedToken) ? "Cancel" : "Close")
-                </button>
                 @if (string.IsNullOrEmpty(generatedToken))
                 {
+                    <button type="button" class="btn btn-secondary" @onclick="CloseCreateModal">Cancel</button>
                     <button type="button" class="btn btn-primary" @onclick="CreateToken" disabled="@string.IsNullOrWhiteSpace(newToken.Name)">
                         Create Token
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-primary" @onclick="CloseCreateModal" disabled="@(!confirmCopied)" title="@(confirmCopied ? "" : "Tick the checkbox above first.")">
+                        Done
                     </button>
                 }
             </div>
@@ -322,6 +366,11 @@
         generatedToken = "";
         expirationOption = "never";
         newTokenSystemSelection = "__admin__";
+        tokenCopied = false;
+        confirmCopied = false;
+        testInFlight = false;
+        testOk = false;
+        testResult = "";
         showCreateModal = true;
     }
 
@@ -330,6 +379,11 @@
         showCreateModal = false;
         newToken = new SCIMServer.Web.Services.ApiToken();
         generatedToken = "";
+        tokenCopied = false;
+        confirmCopied = false;
+        testInFlight = false;
+        testOk = false;
+        testResult = "";
     }
 
     private async Task CreateToken()
@@ -406,9 +460,63 @@
         }
     }
 
+    // Post-mint hardening state. The "Done" button stays disabled until confirmCopied
+    // is checked. The test runner round-trips the raw value against the local SCIM
+    // discovery endpoint so the user can confirm — in the same dialog — that the token
+    // they're about to walk away with actually works.
+    private bool tokenCopied;
+    private bool confirmCopied;
+    private bool testInFlight;
+    private bool testOk;
+    private string testResult = "";
+
     private async Task CopyToken()
     {
-        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", generatedToken);
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", $"Bearer {generatedToken}");
+            tokenCopied = true;
+        }
+        catch
+        {
+            // Clipboard API can be denied in embedded contexts — silent best-effort.
+        }
+    }
+
+    private async Task SelectAllOnFocus(MouseEventArgs _)
+    {
+        // Convenience: clicking the token field selects the whole value for easy copy.
+        await JSRuntime.InvokeVoidAsync("eval", "document.activeElement && document.activeElement.select && document.activeElement.select();");
+    }
+
+    private async Task TestNewToken()
+    {
+        if (string.IsNullOrEmpty(generatedToken)) return;
+        testInFlight = true;
+        testResult = "";
+        testOk = false;
+        StateHasChanged();
+        try
+        {
+            var baseUrl = Navigation.BaseUri.TrimEnd('/');
+            using var client = new HttpClient { BaseAddress = new Uri(baseUrl) };
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", generatedToken);
+            var resp = await client.GetAsync("/scim/v2/ServiceProviderConfig");
+            testOk = resp.IsSuccessStatusCode;
+            testResult = testOk
+                ? $"✓ {(int)resp.StatusCode} {resp.ReasonPhrase} — token validated against /scim/v2/ServiceProviderConfig."
+                : $"✗ {(int)resp.StatusCode} {resp.ReasonPhrase} — token did NOT validate. Check the value you saved.";
+        }
+        catch (Exception ex)
+        {
+            testOk = false;
+            testResult = $"✗ Request failed: {ex.Message}";
+        }
+        finally
+        {
+            testInFlight = false;
+        }
     }
 
     [Inject]
