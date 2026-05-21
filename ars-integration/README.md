@@ -21,8 +21,12 @@ This is the demo artifact for the UNITE 2026 talk
 | `UNITE-SCIMRest.ps1`     | The universal SCIM engine — HTTP, retry, mapping engine | Developers (rarely) |
 | `README.md`              | This file | — |
 
-The two `.ps1` files are loaded into Active Roles as **ScriptModules** (one
-each). Workflow activities reference both modules.
+The two `.ps1` files live separately in the repo for clarity (admins edit the
+mapping table without touching the engine), but the deploy tool
+(`UNITE-Hub-Admin.ps1 -Verb ApplyMappingsToARS`) **concatenates them at push
+time** into a single ARS ScriptModule called `UNITE-SCIMRest`. Workflow
+`PowerShellActivity` entries reference only that one module — no XAML edits
+needed when you change mappings.
 
 ---
 
@@ -107,18 +111,28 @@ On the **UNITE Provisioning Hub** workflow, add two parameters:
 
 > URIs are tolerant: with or without trailing `/Users` both work.
 
-### 4) Add the branch to the workflow
+### 4) Push the updated module to ARS
+
+From a workstation with the AR Management Shell installed:
+
+```powershell
+.\UNITE-Hub-Admin.ps1 -Verb ApplyMappingsToARS
+```
+
+This reads both `.ps1` files from this folder, concatenates them (mappings on
+top, engine below), and overwrites the `UNITE-SCIMRest` ScriptModule in ARS.
+No XAML or MMC step needed.
+
+### 5) Add the branch to the workflow
 
 Open the **UNITE Provisioning Hub** workflow in MMC and extend the outer
 IfElse "Which app?" with a new branch for `JiraCloud`. Inside that branch,
 mirror the inner IfElse "Which action?" with two `PowerShellActivity`
-entries pointing at `Provision-JiraCloud` and `Disable-JiraCloud`.
+entries pointing at `Provision-JiraCloud` and `Disable-JiraCloud`. Both
+activities reference only `UNITE-SCIMRest` (which already carries the
+mapping table from step 4).
 
-Each activity must reference **both** ScriptModules:
-- `UNITE-SCIMRest`
-- `UNITE-SCIMMappings`
-
-### 5) Add the Web Interface action button (optional)
+### 6) Add the Web Interface action button (optional)
 
 If you want a one-click button for the helpdesk on the user object's task
 list, add a Task entry to the WebInterface customization (see the SQL examples
