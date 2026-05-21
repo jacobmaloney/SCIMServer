@@ -6,6 +6,7 @@
 @inject TenantRepository TenantRepo
 @inject ApiTokenService Tokens
 @inject DemoSeedService DemoSeed
+@inject ActiveSystemState ActiveSystem
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
@@ -126,8 +127,11 @@
                             </button>
                             @if (s.TenantId != TenantRepository.DefaultTenantId)
                             {
-                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateSystem(s)">
+                                <button class="btn btn-sm btn-outline-warning" @onclick="() => DeactivateSystem(s)" title="Deactivate (soft delete — data stays in the database)">
                                     <i class="oi oi-ban"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => ShowDeleteModal(s)" title="Delete forever (purges users, groups, tokens, memberships)">
+                                    <i class="oi oi-trash"></i>
                                 </button>
                             }
                         </div>
@@ -398,6 +402,75 @@
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @onclick="CloseEndpoints">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@if (deletingFor is not null)
+{
+    <div class="modal show d-block" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title text-danger">
+                        <i class="oi oi-warning"></i>
+                        Delete Connected System forever
+                    </h5>
+                    <button class="btn-close" @onclick="CloseDeleteModal" disabled="@deleteInProgress"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger">
+                        <strong>This cannot be undone.</strong>
+                        Hard-delete <strong>@deletingFor.Name</strong> and every row that references it.
+                    </div>
+
+                    <div class="section-eyebrow">What will be deleted</div>
+                    <div class="table-responsive mb-3">
+                        <table class="endpoints-table">
+                            <thead>
+                                <tr><th style="width: 60%">Surface</th><th>Rows</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Users (with their emails, phone numbers, addresses)</td><td><code>@deletingFor.UserCount</code></td></tr>
+                                <tr><td>Groups (with all memberships)</td><td><code>@deletingFor.GroupCount</code></td></tr>
+                                <tr><td>API tokens scoped to this system</td><td><code>@deletingFor.TokenCount</code></td></tr>
+                                <tr><td>The Connected System row itself</td><td><code>1</code></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <p>Type the system's <strong>slug</strong> (<code>@deletingFor.Slug</code>) below to enable the delete button:</p>
+                    <input class="form-control mono"
+                           @bind="deleteConfirmText"
+                           @bind:event="oninput"
+                           placeholder="@deletingFor.Slug"
+                           disabled="@deleteInProgress"
+                           autocomplete="off" />
+
+                    @if (!string.IsNullOrEmpty(deleteError))
+                    {
+                        <div class="alert alert-danger mt-3 mb-0 py-2">@deleteError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseDeleteModal" disabled="@deleteInProgress">Cancel</button>
+                    <button class="btn btn-danger"
+                            @onclick="ConfirmDeleteSystem"
+                            disabled="@(deleteInProgress || !string.Equals(deleteConfirmText, deletingFor.Slug, StringComparison.Ordinal))">
+                        @if (deleteInProgress)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Deleting…</span>
+                        }
+                        else
+                        {
+                            <i class="oi oi-trash"></i>
+                            <span class="ms-1">Delete forever</span>
+                        }
+                    </button>
                 </div>
             </div>
         </div>
@@ -682,5 +755,68 @@
         if (!confirmed) return;
         await TenantRepo.DeactivateAsync(s.TenantId);
         await Load();
+    }
+
+    // ─── Hard-delete (forever) ─────────────────────────────────────────────
+    // The destructive flow is intentionally awkward: a dedicated modal, a typed-
+    // name confirmation, a separate "Deleting…" spinner state. Anyone who reaches
+    // the final click was thinking about it long enough to mean it.
+    private TenantStats? deletingFor;
+    private string deleteConfirmText = "";
+    private bool deleteInProgress;
+    private string deleteError = "";
+
+    private void ShowDeleteModal(TenantStats s)
+    {
+        deletingFor = s;
+        deleteConfirmText = "";
+        deleteError = "";
+        deleteInProgress = false;
+    }
+
+    private void CloseDeleteModal()
+    {
+        if (deleteInProgress) return;
+        deletingFor = null;
+        deleteConfirmText = "";
+        deleteError = "";
+    }
+
+    private async Task ConfirmDeleteSystem()
+    {
+        if (deletingFor is null) return;
+        if (!string.Equals(deleteConfirmText, deletingFor.Slug, StringComparison.Ordinal)) return;
+
+        deleteInProgress = true;
+        deleteError = "";
+        StateHasChanged();
+        try
+        {
+            var ok = await TenantRepo.DeleteAsync(deletingFor.TenantId);
+            if (!ok)
+            {
+                deleteError = "Delete refused — the Default system cannot be removed.";
+                return;
+            }
+
+            // If the active sidebar selection was the one we just nuked, drop it
+            // so the rest of the app doesn't keep pointing at a dead Connected System.
+            if (ActiveSystem.ActiveSystem?.Id == deletingFor.TenantId)
+            {
+                await ActiveSystem.SetAsync(null);
+            }
+
+            deletingFor = null;
+            deleteConfirmText = "";
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            deleteError = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            deleteInProgress = false;
+        }
     }
 }

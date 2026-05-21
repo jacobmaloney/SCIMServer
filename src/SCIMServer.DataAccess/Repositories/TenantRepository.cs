@@ -82,16 +82,71 @@ namespace SCIMServer.DataAccess.Repositories
         }
 
         /// <summary>
-        /// Hard delete. Fails (returns false) if any Users / Groups / ApiTokens reference
-        /// this tenant — FKs are enforced.
+        /// Hard delete with full cascade. Removes the Connected System and every row
+        /// that references it — users, groups, group memberships, user emails / phone
+        /// numbers / addresses / role assignments, API tokens, and SqlAccounts. Refuses
+        /// to delete the seed Default tenant. The whole operation runs in a single
+        /// transaction so a mid-step failure rolls back cleanly.
+        ///
+        /// FK references that cross tenant boundaries (a manager in tenant B reporting
+        /// to a user being deleted in tenant A; a group in B owned by a user in A) are
+        /// nulled first so the cascade doesn't trip self-FKs.
         /// </summary>
         public async Task<bool> DeleteAsync(Guid id)
         {
             if (id == DefaultTenantId) return false;
-            var rows = await ExecuteAsync(
-                "DELETE FROM Tenants WHERE Id = @Id",
-                new { Id = id });
-            return rows > 0;
+
+            var p = new DynamicParameters();
+            p.Add("Id", id);
+
+            using var connection = CreateConnection();
+            connection.Open();
+            using var tx = connection.BeginTransaction();
+            try
+            {
+                // Cross-tenant FK cleanup first — null out references pointing AT this
+                // tenant's users/groups from rows that live elsewhere.
+                await connection.ExecuteAsync(@"
+                    UPDATE Users
+                       SET ManagerId = NULL
+                     WHERE ManagerId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    UPDATE Groups
+                       SET OwnerId = NULL
+                     WHERE OwnerId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+
+                // Now strip dependent rows tenant-local in bottom-up FK order.
+                await connection.ExecuteAsync(@"
+                    DELETE FROM GroupMembers
+                     WHERE GroupId IN (SELECT Id FROM Groups WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserRoles
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserAddresses
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserEmails
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserPhoneNumbers
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"DELETE FROM Groups WHERE TenantId = @Id;", p, tx);
+                await connection.ExecuteAsync(@"DELETE FROM Users WHERE TenantId = @Id;", p, tx);
+                await connection.ExecuteAsync(@"DELETE FROM ApiTokens WHERE TenantId = @Id;", p, tx);
+                await connection.ExecuteAsync(@"DELETE FROM SqlAccounts WHERE TenantId = @Id;", p, tx);
+
+                var rows = await connection.ExecuteAsync(
+                    @"DELETE FROM Tenants WHERE Id = @Id;", p, tx);
+
+                tx.Commit();
+                return rows > 0;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
 
         /// <summary>
