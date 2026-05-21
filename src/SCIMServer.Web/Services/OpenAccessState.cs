@@ -43,7 +43,7 @@ public class OpenAccessState
             using var conn = new SqlConnection(_db.ConnectionString);
             await conn.OpenAsync();
             var value = await conn.ExecuteScalarAsync<string?>(
-                "SELECT Value FROM SystemConfigurations WHERE [Key] = @Key",
+                "SELECT [Value] FROM SystemConfiguration WHERE [Key] = @Key",
                 new { Key = ConfigKey });
             _enabled = string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
             _logger.LogInformation("OpenAccessState initialized: {Enabled}", _enabled);
@@ -56,33 +56,28 @@ public class OpenAccessState
     }
 
     /// <summary>
-    /// Persist the new value to the SystemConfigurations table and flip the
+    /// Persist the new value to the SystemConfiguration table and flip the
     /// in-process cache. Called from the Configuration page toggle and from
     /// the Setup wizard when the operator opts into open-access during install.
+    /// MERGE pattern matches SystemConfigurationService.SetAsync exactly so the
+    /// row shape stays consistent regardless of who writes it.
     /// </summary>
     public async Task SetAsync(bool enabled)
     {
+        var value = enabled ? "true" : "false";
+        const string description = "Portal-only open access — no login required when true.";
         using var conn = new SqlConnection(_db.ConnectionString);
         await conn.OpenAsync();
-        var existing = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM SystemConfigurations WHERE [Key] = @Key",
-            new { Key = ConfigKey });
-        var value = enabled ? "true" : "false";
-        if (existing == 0)
-        {
-            await conn.ExecuteAsync(@"
-                INSERT INTO SystemConfigurations ([Key], [Value], [Type], [Description], [Category])
-                VALUES (@Key, @Value, 'Boolean', 'Portal-only open access — no login required when true.', 'Security')",
-                new { Key = ConfigKey, Value = value });
-        }
-        else
-        {
-            await conn.ExecuteAsync(@"
-                UPDATE SystemConfigurations
-                   SET [Value] = @Value, [Type] = 'Boolean', [Category] = 'Security'
-                 WHERE [Key] = @Key",
-                new { Key = ConfigKey, Value = value });
-        }
+        await conn.ExecuteAsync(@"
+            MERGE SystemConfiguration AS target
+            USING (SELECT @Key AS [Key]) AS src
+               ON target.[Key] = src.[Key]
+            WHEN MATCHED THEN
+                UPDATE SET [Value] = @Value, [Type] = 'Boolean', [Description] = @Description, [LastModified] = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT ([Key], [Value], [Type], [Description])
+                VALUES (@Key, @Value, 'Boolean', @Description);",
+            new { Key = ConfigKey, Value = value, Description = description });
         _enabled = enabled;
         _logger.LogWarning("OpenAccessState changed to {Enabled} — portal authentication is now {AuthStatus}.",
             enabled, enabled ? "OFF (open access)" : "ON");
