@@ -1,5 +1,5 @@
 # ============================================================================
-# UNITE-SCIMMappings — Attribute mapping table for the UNITE Provisioning Hub
+# UNITE-SCIMMappings - Attribute mapping table for the UNITE Provisioning Hub
 # ----------------------------------------------------------------------------
 # This is the ONLY file you edit to add a new SCIM target. The universal SCIM
 # engine in UNITE-SCIMRest reads this table at runtime.
@@ -8,7 +8,7 @@
 #   1) Add an entry to $script:SCIMMappings keyed by your AppKey (no spaces,
 #      e.g. "JiraCloud", "Workday", "SnowflakeAdmin")
 #   2) Map SCIM payload paths to AD attribute names (or literals, or computed
-#      values — see README.md for full syntax)
+#      values - see README.md for full syntax)
 #   3) Register the matching workflow parameters (SCIM-<AppKey>-URI,
 #      SCIM-<AppKey>-Token) on the UNITE Provisioning Hub workflow
 #   4) Add the per-app function (Provision-<AppKey> / Disable-<AppKey>) and
@@ -46,7 +46,7 @@
 $script:SCIMMappings = @{
 
     # ------------------------------------------------------------------------
-    # HR Connect — minimal core schema, just identity + email
+    # HR Connect - minimal core schema, just identity + email
     # ------------------------------------------------------------------------
     "HRConnect" = @{
         "userName"          = "sAMAccountName"
@@ -60,7 +60,7 @@ $script:SCIMMappings = @{
     }
 
     # ------------------------------------------------------------------------
-    # IT Helpdesk Portal — adds department + title for ticket routing
+    # IT Helpdesk Portal - adds department + title for ticket routing
     # ------------------------------------------------------------------------
     "ITHelpdeskPortal" = @{
         "userName"                  = "sAMAccountName"
@@ -78,7 +78,7 @@ $script:SCIMMappings = @{
     }
 
     # ------------------------------------------------------------------------
-    # Finance Suite — keys on email (not sam), needs cost center + manager
+    # Finance Suite - keys on email (not sam), needs cost center + manager
     # ------------------------------------------------------------------------
     "FinanceSuite" = @{
         "userName"                = "mail"              # Finance keys on email

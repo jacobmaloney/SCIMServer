@@ -1,8 +1,8 @@
 # ============================================================================
-# UNITE-SCIMRest — Universal SCIM 2.0 provisioning engine for ARS workflows
+# UNITE-SCIMRest - Universal SCIM 2.0 provisioning engine for ARS workflows
 # ----------------------------------------------------------------------------
 # One script provisions/disables users in N SCIM 2.0 targets. Attribute
-# mappings live in the separate UNITE-SCIMMappings ScriptModule — do not
+# mappings live in the separate UNITE-SCIMMappings ScriptModule - do not
 # edit this file to add a new app.
 #
 # Wire each per-app function (Provision-<App> / Disable-<App>) to a
@@ -30,7 +30,7 @@ try {
 
 
 # ============================================================================
-# PUBLIC ENTRY POINTS — wire these into the workflow IfElse branches
+# PUBLIC ENTRY POINTS - wire these into the workflow IfElse branches
 # ============================================================================
 
 function Provision-HRConnect        { _Do-Provision -AppKey "HRConnect"        -Request $Request }
@@ -102,7 +102,7 @@ function _Do-Disable {
 
 
 # ============================================================================
-# MAPPING ENGINE — reads $script:SCIMMappings from UNITE-SCIMMappings
+# MAPPING ENGINE - reads $script:SCIMMappings from UNITE-SCIMMappings
 # ============================================================================
 
 function _Build-CreateUser {
@@ -256,7 +256,7 @@ function _Get-SCIMContext {
     if (-not $uri)   { throw "Workflow parameter '$uriParam' is empty. Configure it on the UNITE Provisioning Hub workflow." }
     if (-not $token) { throw "Workflow parameter '$tokenParam' is empty. Configure it on the UNITE Provisioning Hub workflow." }
 
-    # Tolerate trailing /Users — script appends it itself.
+    # Tolerate trailing /Users - script appends it itself.
     $uri = $uri.TrimEnd('/')
     if ($uri.EndsWith("/Users")) { $uri = $uri.Substring(0, $uri.Length - "/Users".Length) }
 
@@ -334,20 +334,20 @@ function _Classify-NoResponse {
     if ($resp) {
         $code = [int]$resp.StatusCode
         switch ($code) {
-            401 { return "401 Unauthorized — token is wrong, missing 'Bearer ' prefix, or expired" }
-            403 { return "403 Forbidden — token lacks permission on this Connected System" }
-            404 { return "404 Not Found — check the URI; the slug may not match a Connected System" }
-            409 { return "409 Conflict — user already exists; race condition between Find and Create" }
-            429 { return "429 Rate limited — back off and retry" }
+            401 { return "401 Unauthorized - token is wrong, missing 'Bearer ' prefix, or expired" }
+            403 { return "403 Forbidden - token lacks permission on this Connected System" }
+            404 { return "404 Not Found - check the URI; the slug may not match a Connected System" }
+            409 { return "409 Conflict - user already exists; race condition between Find and Create" }
+            429 { return "429 Rate limited - back off and retry" }
             default {
-                if ($code -ge 500) { return "$code Server error — check SCIMServer logs" }
+                if ($code -ge 500) { return "$code Server error - check SCIMServer logs" }
                 return "$code $msg"
             }
         }
     }
-    if ($msg -match "actively refused|No connection could be made") { return "Connection refused — is SCIMServer running on the configured host:port?" }
-    if ($msg -match "remote name could not be resolved")             { return "DNS failure — check the host in the URI" }
-    if ($msg -match "timed out")                                     { return "Timeout — SCIMServer did not respond" }
-    if ($msg -match "SSL|TLS|certificate")                           { return "TLS error — self-signed cert; enable the TrustAllCertsPolicy block at top of script for lab use" }
+    if ($msg -match "actively refused|No connection could be made") { return "Connection refused - is SCIMServer running on the configured host:port?" }
+    if ($msg -match "remote name could not be resolved")             { return "DNS failure - check the host in the URI" }
+    if ($msg -match "timed out")                                     { return "Timeout - SCIMServer did not respond" }
+    if ($msg -match "SSL|TLS|certificate")                           { return "TLS error - self-signed cert; enable the TrustAllCertsPolicy block at top of script for lab use" }
     return $msg
 }
