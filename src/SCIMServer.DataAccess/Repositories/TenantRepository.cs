@@ -99,8 +99,9 @@ namespace SCIMServer.DataAccess.Repositories
             var p = new DynamicParameters();
             p.Add("Id", id);
 
+            // CreateConnection() already opens the connection — don't call Open() again
+            // or SqlConnection throws "connection's current state is open."
             using var connection = CreateConnection();
-            connection.Open();
             using var tx = connection.BeginTransaction();
             try
             {
