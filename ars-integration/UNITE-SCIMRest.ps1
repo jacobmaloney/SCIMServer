@@ -258,12 +258,12 @@ function _Get-SCIMContext {
     if ($token) { $token = $token.Trim() }
 
     if (-not $uri)   { throw "Workflow parameter '$uriParam' is empty. Open the workflow's Parameters dialog in MMC and set it." }
-    if (-not $token) { throw "Workflow parameter '$tokenParam' is empty. Open the workflow's Parameters dialog in MMC, click in the value field, paste the raw token (without scim_ prefix), and OK. If you see ******** but get this error, the previous save did not persist - re-enter it." }
+    if (-not $token) { throw "Workflow parameter '$tokenParam' is empty. Open the workflow's Parameters dialog in MMC, click in the value field, paste the FULL bearer token (exactly as your SCIM provider gave you - SCIMServer mints with a 'scim_' prefix, Okta/Auth0/etc. don't), and OK. If you see ******** but get this error, the previous save did not persist - re-enter it." }
 
-    # SCIMServer mints tokens with a 'scim_' prefix and that prefix is part of
-    # the bearer value. Admins pasting via MMC usually paste the raw mint value
-    # WITHOUT the prefix. Add it defensively if missing.
-    if (-not $token.StartsWith("scim_")) { $token = "scim_$token" }
+    # NOTE: the engine deliberately does NOT munge the token. Whatever the
+    # admin pasted is what gets sent verbatim after 'Bearer '. SCIMServer
+    # happens to mint tokens with a 'scim_' prefix; other SCIM providers
+    # don't. The token format is the SCIM provider's contract, not ours.
 
     # Tolerate trailing /Users - script appends it itself.
     $uri = $uri.TrimEnd('/')
