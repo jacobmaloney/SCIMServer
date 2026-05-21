@@ -43,8 +43,8 @@ namespace SCIMServer.DataAccess.Repositories
             tenant.LastModified = tenant.Created;
 
             const string sql = @"
-                INSERT INTO Tenants (Id, Name, Slug, Description, SystemType, Domain, IsActive, Created, LastModified)
-                VALUES (@Id, @Name, @Slug, @Description, @SystemType, @Domain, @IsActive, @Created, @LastModified);";
+                INSERT INTO Tenants (Id, Name, Slug, Description, SystemType, Domain, IsActive, LegalHold, Created, LastModified)
+                VALUES (@Id, @Name, @Slug, @Description, @SystemType, @Domain, @IsActive, @LegalHold, @Created, @LastModified);";
             await ExecuteAsync(sql, tenant);
             return tenant;
         }
@@ -61,11 +61,38 @@ namespace SCIMServer.DataAccess.Repositories
                        SystemType = @SystemType,
                        Domain = @Domain,
                        IsActive = @IsActive,
+                       LegalHold = @LegalHold,
                        LastModified = @LastModified
                  WHERE Id = @Id;";
 
             var rows = await ExecuteAsync(sql, tenant);
             return rows == 0 ? null : tenant;
+        }
+
+        /// <summary>
+        /// Sets the LegalHold flag in isolation — does NOT touch any other column.
+        /// Called by the toggle on the Connected Systems card. The caller is expected
+        /// to audit-log the change since the repo doesn't see the operator context.
+        /// </summary>
+        public async Task<bool> SetLegalHoldAsync(Guid id, bool enabled)
+        {
+            var rows = await ExecuteAsync(@"
+                UPDATE Tenants
+                   SET LegalHold = @Enabled, LastModified = SYSUTCDATETIME()
+                 WHERE Id = @Id;",
+                new { Id = id, Enabled = enabled });
+            return rows > 0;
+        }
+
+        /// <summary>
+        /// True if the Connected System has LegalHold = 1. Cheap read used by the
+        /// repo's destructive paths to gate before any cascade work begins.
+        /// </summary>
+        public async Task<bool> IsOnLegalHoldAsync(Guid id)
+        {
+            return await ExecuteScalarAsync<bool>(
+                "SELECT ISNULL(LegalHold, 0) FROM Tenants WHERE Id = @Id",
+                new { Id = id });
         }
 
         /// <summary>
@@ -93,6 +120,10 @@ namespace SCIMServer.DataAccess.Repositories
         /// </summary>
         public async Task<int> ClearDataAsync(Guid id)
         {
+            // Hard refusal on legal hold. Sentinel value -1 distinguishes "refused"
+            // from "ran and removed 0 rows" in the caller's UI.
+            if (await IsOnLegalHoldAsync(id)) return -1;
+
             var p = new DynamicParameters();
             p.Add("Id", id);
 
@@ -152,6 +183,7 @@ namespace SCIMServer.DataAccess.Repositories
         public async Task<bool> DeleteAsync(Guid id)
         {
             if (id == DefaultTenantId) return false;
+            if (await IsOnLegalHoldAsync(id)) return false;
 
             var p = new DynamicParameters();
             p.Add("Id", id);
@@ -220,6 +252,7 @@ namespace SCIMServer.DataAccess.Repositories
                        t.SystemType AS SystemType,
                        t.Domain AS Domain,
                        t.IsActive AS IsActive,
+                       ISNULL(t.LegalHold, 0) AS LegalHold,
                        (SELECT COUNT(*) FROM Users  WHERE TenantId = t.Id) AS UserCount,
                        (SELECT COUNT(*) FROM Groups WHERE TenantId = t.Id) AS GroupCount,
                        (SELECT COUNT(*) FROM ApiTokens WHERE TenantId = t.Id AND IsActive = 1) AS TokenCount
@@ -241,6 +274,7 @@ namespace SCIMServer.DataAccess.Repositories
         public string SystemType { get; set; } = "Emulator";
         public string? Domain { get; set; }
         public bool IsActive { get; set; }
+        public bool LegalHold { get; set; }
         public int UserCount { get; set; }
         public int GroupCount { get; set; }
         public int TokenCount { get; set; }

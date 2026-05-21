@@ -27,6 +27,14 @@ namespace SCIMServer.Core.Models
         public string? Domain { get; set; }
 
         public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// Legal hold flag. When true, ClearDataAsync and DeleteAsync refuse to run —
+        /// the operator must explicitly clear the flag (an audit-logged action) first.
+        /// Intended for Connected Systems that hold historical, non-reproducible data.
+        /// </summary>
+        public bool LegalHold { get; set; } = false;
+
         public DateTime Created { get; set; }
         public DateTime LastModified { get; set; }
     }

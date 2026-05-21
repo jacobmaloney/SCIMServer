@@ -9,6 +9,7 @@
 @inject ActiveSystemState ActiveSystem
 @inject DataChangeNotifier DataChange
 @inject AuditLogService Audit
+@inject TenantSnapshotService Snapshots
 @inject AuthenticationStateProvider AuthState
 @inject IHttpContextAccessor HttpCtx
 @inject NavigationManager Navigation
@@ -129,15 +130,29 @@
                             <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditSystem(s.TenantId)">
                                 <i class="oi oi-pencil"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => ClearData(s)" disabled="@clearing" title="Clear users + groups in this system (keeps the system, its tokens, and its config)">
+                            <button class="btn btn-sm @(s.LegalHold ? "btn-warning" : "btn-outline-secondary")"
+                                    @onclick="() => ToggleLegalHold(s)"
+                                    title="@(s.LegalHold ? "Legal hold ON — destructive actions are refused. Click to release." : "Put this system on legal hold — refuses Clear/Deactivate/Delete until released.")">
+                                <i class="oi @(s.LegalHold ? "oi-lock-locked" : "oi-lock-unlocked")"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    @onclick="() => ClearData(s)"
+                                    disabled="@(clearInProgress || s.LegalHold)"
+                                    title="@(s.LegalHold ? "Refused — system is on legal hold." : "Clear users + groups in this system (keeps the system, its tokens, and its config)")">
                                 <i class="oi oi-eraser"></i>
                             </button>
                             @if (s.TenantId != TenantRepository.DefaultTenantId)
                             {
-                                <button class="btn btn-sm btn-outline-warning" @onclick="() => DeactivateSystem(s)" title="Deactivate (soft delete — data stays in the database)">
+                                <button class="btn btn-sm btn-outline-warning"
+                                        @onclick="() => DeactivateSystem(s)"
+                                        disabled="@s.LegalHold"
+                                        title="@(s.LegalHold ? "Refused — system is on legal hold." : "Deactivate (soft delete — data stays in the database)")">
                                     <i class="oi oi-ban"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger" @onclick="() => ShowDeleteModal(s)" title="Delete forever (purges users, groups, tokens, memberships)">
+                                <button class="btn btn-sm btn-outline-danger"
+                                        @onclick="() => ShowDeleteModal(s)"
+                                        disabled="@s.LegalHold"
+                                        title="@(s.LegalHold ? "Refused — system is on legal hold." : "Delete forever (purges users, groups, tokens, memberships)")">
                                     <i class="oi oi-trash"></i>
                                 </button>
                             }
@@ -831,10 +846,10 @@
 
     // Centralized audit emit so every destructive action on this page lands in
     // the same shape. Captures the signed-in operator, the request's client IP,
-    // and the counts that were affected at the time the action ran — so a later
-    // forensic look can answer "who cleared system X on date Y and what did they
-    // wipe?" without needing to reconstruct state.
-    private async Task AuditDestructiveAsync(string action, TenantStats target, string details)
+    // the counts that were affected at the time the action ran, AND (when a
+    // snapshot is supplied) the full JSON serialization of the data that was
+    // about to disappear — so forensic recovery is possible even after a wipe.
+    private async Task AuditDestructiveAsync(string action, TenantStats target, string details, string? snapshotJson = null)
     {
         try
         {
@@ -858,6 +873,7 @@
                 userAgent: ua,
                 statusCode: 200,
                 details: $"System '{target.Name}' (slug={target.Slug}). {details}",
+                oldValue: snapshotJson,   // full pre-destroy snapshot when supplied — enables recovery
                 newValue: $"UserCount={target.UserCount}, GroupCount={target.GroupCount}, TokenCount={target.TokenCount}");
         }
         catch (Exception ex)
@@ -869,11 +885,40 @@
         }
     }
 
+    // Toggle the legal-hold flag. Audit-logged on both directions because the
+    // act of changing the hold IS evidence — operators flipping a hold off
+    // immediately before a wipe is exactly the pattern an investigator would
+    // want to see end-to-end in the audit trail.
+    private async Task ToggleLegalHold(TenantStats s)
+    {
+        var turningOn = !s.LegalHold;
+        var prompt = turningOn
+            ? $"Put '{s.Name}' on legal hold? Clear, Deactivate, and Delete will all be refused until the hold is released."
+            : $"Release legal hold on '{s.Name}'? Destructive actions will be possible again.";
+        var confirmed = await JS.InvokeAsync<bool>("confirm", prompt);
+        if (!confirmed) return;
+
+        try
+        {
+            await TenantRepo.SetLegalHoldAsync(s.TenantId, turningOn);
+            await AuditDestructiveAsync(
+                action: turningOn ? "ConnectedSystem.LegalHold.Set" : "ConnectedSystem.LegalHold.Released",
+                target: s,
+                details: turningOn
+                    ? $"Operator placed system on legal hold. Destructive actions now refused at the repository layer."
+                    : $"Operator released legal hold. Destructive actions are permitted again — investigate any wipe that follows.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"Could not change legal hold: {ex.Message}");
+        }
+    }
+
     // Per-card "clear data" — wipes users + groups in this Connected System but
     // leaves the system itself (and its API tokens and config) alive. Same
     // typed-slug confirmation as Delete-forever; the operator literally has to
     // re-type the system identifier before the button enables.
-    private bool clearing;
     private TenantStats? clearingFor;
     private string clearConfirmText = "";
     private bool clearInProgress;
@@ -911,9 +956,29 @@
         try
         {
             var target = clearingFor;
+
+            // Snapshot every doomed row BEFORE the cascade runs — stored on the
+            // audit log entry so a later forensic recovery has the data to work from.
+            string? snapshot = null;
+            try { snapshot = await Snapshots.BuildAsync(target.TenantId); }
+            catch (Exception snapEx)
+            {
+                Console.WriteLine($"Snapshot failed for {target.Slug}: {snapEx.Message}");
+                // Best-effort. We still audit-log the action, just without the recovery JSON.
+            }
+
             var removed = await TenantRepo.ClearDataAsync(target.TenantId);
+            if (removed < 0)
+            {
+                // Repo returns -1 when LegalHold is set. Surface clearly; no audit
+                // because nothing happened.
+                clearError = "Refused: this Connected System is on legal hold. Clear the hold first via its lock icon.";
+                clearInProgress = false;
+                return;
+            }
             await AuditDestructiveAsync("ConnectedSystem.ClearData", target,
-                details: $"Hard wipe of users + groups. {removed} rows removed (snapshot before clear: {target.UserCount} users, {target.GroupCount} groups). System, tokens, and config preserved.");
+                details: $"Hard wipe of users + groups. {removed} rows removed (snapshot before clear: {target.UserCount} users, {target.GroupCount} groups). System, tokens, and config preserved.",
+                snapshotJson: snapshot);
             var name = target.Name;
             clearingFor = null;
             clearConfirmText = "";
@@ -966,6 +1031,21 @@
         try
         {
             var target = deletingFor;
+
+            // Snapshot before the cascade — same forensic-recovery contract as Clear.
+            string? snapshot = null;
+            try { snapshot = await Snapshots.BuildAsync(target.TenantId); }
+            catch (Exception snapEx)
+            {
+                Console.WriteLine($"Snapshot failed for {target.Slug}: {snapEx.Message}");
+            }
+
+            if (target.LegalHold)
+            {
+                deleteError = "Refused: this Connected System is on legal hold. Clear the hold first via its lock icon.";
+                return;
+            }
+
             var ok = await TenantRepo.DeleteAsync(target.TenantId);
             if (!ok)
             {
@@ -974,7 +1054,8 @@
             }
 
             await AuditDestructiveAsync("ConnectedSystem.DeleteForever", target,
-                details: $"Hard delete of Connected System and ALL referencing rows: {target.UserCount} users, {target.GroupCount} groups, {target.TokenCount} tokens, plus the Tenant row itself. Irreversible.");
+                details: $"Hard delete of Connected System and ALL referencing rows: {target.UserCount} users, {target.GroupCount} groups, {target.TokenCount} tokens, plus the Tenant row itself. Irreversible.",
+                snapshotJson: snapshot);
 
             // If the active sidebar selection was the one we just nuked, drop it
             // so the rest of the app doesn't keep pointing at a dead Connected System.

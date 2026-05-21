@@ -493,6 +493,28 @@ END;
 "
             });
 
+            // Migration 10 (v12): Legal-hold flag on Tenants. A Connected System with
+            // LegalHold = 1 cannot be cleared or hard-deleted from the UI — the operator
+            // has to explicitly take the flag off (an audit-logged action in itself)
+            // before any destructive operation runs. The intended use is "this system
+            // holds historical events that can't be reproduced; refuse to drop the data."
+            migrations.Add(new SchemaMigration
+            {
+                Version = 12,
+                Name = "Tenants.LegalHold",
+                Description = "Adds the LegalHold flag to Tenants — destructive ops refuse when set.",
+                SqlScript = @"
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID('dbo.Tenants') AND name = 'LegalHold')
+BEGIN
+    ALTER TABLE [dbo].[Tenants]
+        ADD [LegalHold] BIT NOT NULL
+        CONSTRAINT [DF_Tenants_LegalHold] DEFAULT 0;
+END;
+"
+            });
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }
