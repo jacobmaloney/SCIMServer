@@ -7,6 +7,7 @@
 @inject ApiTokenService Tokens
 @inject DemoSeedService DemoSeed
 @inject ActiveSystemState ActiveSystem
+@inject DataChangeNotifier DataChange
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
@@ -666,6 +667,9 @@
         try { stats = await TenantRepo.GetStatsAsync(); }
         catch (Exception ex) { Console.WriteLine($"Failed to load connected systems: {ex.Message}"); }
         finally { loading = false; }
+        // Tell the sidebar (and anyone else listening) that the tenant list may
+        // have changed — switcher refreshes without a full page reload.
+        await DataChange.NotifyAsync(DataChangeKind.Tenants);
     }
 
     private void ShowCreateModal()

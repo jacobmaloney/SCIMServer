@@ -21,5 +21,11 @@ public enum DataChangeKind
 {
     Users,
     Groups,
-    Both
+    Both,
+    /// <summary>
+    /// Connected System (tenant) list itself changed — added, edited, deleted,
+    /// seeded, or deactivated. NavMenu listens so the switcher refreshes its
+    /// tenant list without a page reload.
+    /// </summary>
+    Tenants
 }

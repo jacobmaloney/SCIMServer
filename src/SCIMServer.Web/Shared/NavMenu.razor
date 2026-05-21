@@ -439,6 +439,11 @@
 
     private async Task HandleDataChangedAsync(DataChangeKind kind)
     {
+        if (kind == DataChangeKind.Tenants)
+        {
+            try { tenants = await TenantRepo.GetAllAsync(); }
+            catch (Exception ex) { Console.WriteLine($"NavMenu: tenant refresh failed — {ex.Message}"); }
+        }
         await LoadCountsAsync();
         await InvokeAsync(StateHasChanged);
     }
