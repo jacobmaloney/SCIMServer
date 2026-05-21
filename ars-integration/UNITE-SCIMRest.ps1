@@ -253,8 +253,17 @@ function _Get-SCIMContext {
     $uri   = $Workflow.Parameter($uriParam)
     $token = $Workflow.Parameter($tokenParam)
 
-    if (-not $uri)   { throw "Workflow parameter '$uriParam' is empty. Configure it on the UNITE Provisioning Hub workflow." }
-    if (-not $token) { throw "Workflow parameter '$tokenParam' is empty. Configure it on the UNITE Provisioning Hub workflow." }
+    # Trim BOTH ends - MMC sometimes saves values with a leading space.
+    if ($uri)   { $uri   = $uri.Trim() }
+    if ($token) { $token = $token.Trim() }
+
+    if (-not $uri)   { throw "Workflow parameter '$uriParam' is empty. Open the workflow's Parameters dialog in MMC and set it." }
+    if (-not $token) { throw "Workflow parameter '$tokenParam' is empty. Open the workflow's Parameters dialog in MMC, click in the value field, paste the raw token (without scim_ prefix), and OK. If you see ******** but get this error, the previous save did not persist - re-enter it." }
+
+    # SCIMServer mints tokens with a 'scim_' prefix and that prefix is part of
+    # the bearer value. Admins pasting via MMC usually paste the raw mint value
+    # WITHOUT the prefix. Add it defensively if missing.
+    if (-not $token.StartsWith("scim_")) { $token = "scim_$token" }
 
     # Tolerate trailing /Users - script appends it itself.
     $uri = $uri.TrimEnd('/')
