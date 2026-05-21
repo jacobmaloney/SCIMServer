@@ -174,6 +174,10 @@ builder.Services.AddSingleton<DataChangeNotifier>();
 // service that keeps the throttle tables bounded.
 builder.Services.AddScoped<LoginThrottle>();
 builder.Services.AddHostedService<LoginThrottlePruner>();
+
+// Portal-only open-access mode (demo / local testing). Singleton holds the
+// in-process cache so [Authorize] doesn't take a DB hit per request.
+builder.Services.AddSingleton<OpenAccessState>();
 builder.Services.AddHostedService<StartupService>();
 
 // CORS is driven by Cors:AllowedOrigins in configuration. If no origins are
@@ -313,6 +317,14 @@ using (var scope = app.Services.CreateScope())
             logger.LogError(ex, "Database initialization failed at startup; routing user to /setup");
             SetupMiddleware.ClearCache();
         }
+
+        // Load Portal.OpenAccess from SystemConfigurations into the singleton cache.
+        try { await app.Services.GetRequiredService<OpenAccessState>().InitializeAsync(); }
+        catch (Exception ex)
+        {
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            logger.LogWarning(ex, "Could not load Portal.OpenAccess at startup; defaulting to disabled.");
+        }
     }
 }
 
@@ -403,6 +415,12 @@ app.UseRateLimiter();
 app.UseMiddleware<ApiTokenAuthMiddleware>();
 
 app.UseAuthentication();
+
+// If portal open-access mode is on, swap in a synthetic admin principal for
+// any portal request that's not already signed in. Runs AFTER UseAuthentication
+// so a real cookie still wins.
+app.UseMiddleware<OpenAccessSignInMiddleware>();
+
 app.UseAuthorization();
 
 // Add SCIM connection logging middleware
@@ -416,7 +434,13 @@ app.MapControllers();
 // per-(user,IP) throttle.
 app.MapRazorPages().RequireRateLimiting("auth");
 
-// Add a simple health check endpoint
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+// Add a simple health check endpoint. Includes Portal.OpenAccess so a monitor
+// can spot when the demo mode is left on.
+app.MapGet("/health", (OpenAccessState openAccess) => Results.Ok(new
+{
+    status = "healthy",
+    timestamp = DateTime.UtcNow,
+    portalOpenAccess = openAccess.IsEnabled
+}));
 
 app.Run();

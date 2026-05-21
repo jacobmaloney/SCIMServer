@@ -15,10 +15,12 @@ namespace SCIMServer.Web.Pages
     public class LoginModel : PageModel
     {
         private readonly LoginService _loginService;
+        private readonly OpenAccessState _openAccess;
 
-        public LoginModel(LoginService loginService)
+        public LoginModel(LoginService loginService, OpenAccessState openAccess)
         {
             _loginService = loginService;
+            _openAccess = openAccess;
         }
 
         [BindProperty]
@@ -32,8 +34,19 @@ namespace SCIMServer.Web.Pages
 
         public string? ErrorMessage { get; set; }
 
-        public void OnGet()
+        public IActionResult OnGet()
         {
+            // When portal open-access is on there's nothing to authenticate to —
+            // any portal page the operator visits will sign them in automatically
+            // via OpenAccessSignInMiddleware. Showing a login form would just be
+            // confusing.
+            if (_openAccess.IsEnabled)
+            {
+                return !string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl)
+                    ? LocalRedirect(ReturnUrl)
+                    : LocalRedirect("/");
+            }
+            return Page();
         }
 
         public async Task<IActionResult> OnPostAsync()

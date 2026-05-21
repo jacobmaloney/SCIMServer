@@ -7,6 +7,7 @@
 @inject GroupRepository GroupRepo
 @inject ActiveSystemState ActiveSystem
 @inject DataChangeNotifier DataChange
+@inject OpenAccessState OpenAccess
 @inject NavigationManager NavigationManager
 @implements IDisposable
 
@@ -20,6 +21,14 @@
             <span class="nav-toggle-icon"></span>
         </button>
     </div>
+
+    @if (OpenAccess.IsEnabled)
+    {
+        <a class="open-access-pill" href="configuration" title="Portal authentication is OFF — click to manage in Configuration">
+            <i class="oi oi-warning"></i>
+            <span>Open access</span>
+        </a>
+    }
 
     <AuthorizeView>
         <Authorized>
