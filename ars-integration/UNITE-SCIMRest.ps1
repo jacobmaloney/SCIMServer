@@ -317,13 +317,16 @@ function _Report {
     param([string]$AppKey, [string]$Action, [string]$Outcome, [string]$ScimId = $null)
     $line = "[$AppKey/$Action] $Outcome"
     if ($ScimId) { $line += " (scimId=$ScimId)" }
-    $Request.SetWorkflowLog($line)
+    # ARS captures Write-Host output into the workflow Change History entry.
+    # PowerShellRequest does not expose a SetWorkflowLog method in 8.x.
+    Write-Host $line
 }
 
 function _ReportError {
     param([string]$AppKey, [string]$Action, [string]$Message)
     $line = "[$AppKey/$Action] ERROR: $Message"
-    $Request.SetWorkflowLog($line)
+    Write-Host $line
+    # throw surfaces the message into the workflow Change History as an error.
     throw $line
 }
 
