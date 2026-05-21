@@ -152,6 +152,7 @@ builder.Services.AddAuthorization();
 // Register services
 builder.Services.AddTransient<DatabaseInitializer>();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 builder.Services.AddScoped<TenantRepository>();
 builder.Services.AddScoped<UserRepository>();

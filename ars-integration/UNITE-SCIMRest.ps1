@@ -265,6 +265,15 @@ function _Get-SCIMContext {
     # happens to mint tokens with a 'scim_' prefix; other SCIM providers
     # don't. The token format is the SCIM provider's contract, not ours.
 
+    # Compute a token "shape" (length + first/last chars + scim_ prefix flag)
+    # that we attach to any error thrown from this dispatch. Write-Host output
+    # from ARS PowerShellActivity does NOT reach Change History; only thrown
+    # exceptions do. So shape goes in the error message itself.
+    $script:TokenShape = if ($token.Length -ge 8) {
+        "len={0}, prefix='{1}', suffix='{2}', startsWithScim_={3}" -f `
+            $token.Length, $token.Substring(0,5), $token.Substring($token.Length-4), $token.StartsWith("scim_")
+    } else { "len=$($token.Length) (short)" }
+
     # Tolerate trailing /Users - script appends it itself.
     $uri = $uri.TrimEnd('/')
     if ($uri.EndsWith("/Users")) { $uri = $uri.Substring(0, $uri.Length - "/Users".Length) }
@@ -343,11 +352,13 @@ function _Classify-NoResponse {
     param($Err)
     $msg = if ($Err.Exception.Message) { $Err.Exception.Message } else { "$Err" }
     $resp = $Err.Exception.Response
+    # Token shape diagnostic captured by _Get-SCIMContext. Append on auth-shaped errors.
+    $shape = if ($script:TokenShape) { "  [tokenShape: $($script:TokenShape)]" } else { "" }
     if ($resp) {
         $code = [int]$resp.StatusCode
         switch ($code) {
-            401 { return "401 Unauthorized - token is wrong, missing 'Bearer ' prefix, or expired" }
-            403 { return "403 Forbidden - token lacks permission on this Connected System" }
+            401 { return "401 Unauthorized - server requires 'Bearer scim_<value>'. Paste the FULL mint string from SCIMServer admin UI into the MMC token parameter.$shape" }
+            403 { return "403 Forbidden - token is valid but scoped to a different Connected System." }
             404 { return "404 Not Found - check the URI; the slug may not match a Connected System" }
             409 { return "409 Conflict - user already exists; race condition between Find and Create" }
             429 { return "429 Rate limited - back off and retry" }
