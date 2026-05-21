@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -15,38 +16,69 @@ namespace SCIMServer.Web.Services
         private readonly IConfiguration _configuration;
         private readonly ILogger<SetupService> _logger;
         private readonly DatabaseConfig _databaseConfig;
-        private readonly string _setupCompleteFile = "setup.complete";
+        private readonly IHostEnvironment _env;
 
-        /// <summary>
-        /// Initializes a new instance of the SetupService class
-        /// </summary>
-        public SetupService(IConfiguration configuration, ILogger<SetupService> logger, DatabaseConfig databaseConfig)
+        // setup.complete is anchored to ContentRootPath so launching from `dotnet run`
+        // (cwd = src/SCIMServer.Web) and launching from Visual Studio (cwd = bin/Debug/...)
+        // both resolve to the same file. Without this, F5 in VS bounces the operator
+        // back into /setup every restart because the marker file "disappears."
+        private readonly string _setupCompleteFile;
+
+        public SetupService(IConfiguration configuration, ILogger<SetupService> logger,
+            DatabaseConfig databaseConfig, IHostEnvironment env)
         {
             _configuration = configuration;
             _logger = logger;
             _databaseConfig = databaseConfig;
+            _env = env;
+            _setupCompleteFile = Path.Combine(env.ContentRootPath, "setup.complete");
         }
 
         /// <summary>
-        /// Checks if the application needs initial setup
+        /// Checks if the application needs initial setup. The authoritative signal is
+        /// "does an active portal admin exist?" — if at least one row is present in
+        /// PortalAdmins we've been set up before regardless of where the marker file
+        /// lives on disk. The marker file is still honored as a secondary positive
+        /// signal so behavior is unchanged on legacy installs.
         /// </summary>
         public async Task<bool> IsSetupRequiredAsync()
         {
-            // Even if setup.complete exists, verify the connection string is real (not a placeholder)
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             if (string.IsNullOrWhiteSpace(connectionString) || IsPlaceholderConnectionString(connectionString))
             {
                 return true;
             }
 
-            // Always probe the database — a stale setup.complete marker (e.g. copied from another
-            // machine, or pointing at a now-unreachable server) must not let us skip setup.
             try
             {
+                // 1. Schema present?
                 var configured = await IsDatabaseConfiguredAsync(connectionString);
                 if (!configured)
                 {
                     return true;
+                }
+
+                // 2. Active portal admin present? This is the real signal — the operator
+                //    can sign in only if there's a row here. If the table doesn't exist
+                //    yet (pre-v10 schema) we treat that as "setup required" since the
+                //    next migration will create it.
+                using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync();
+                var hasTable = await conn.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(*) FROM sys.tables WHERE name = 'PortalAdmins'") > 0;
+                if (!hasTable)
+                {
+                    return true;
+                }
+                var activeAdmins = await conn.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(*) FROM PortalAdmins WHERE Active = 1");
+                if (activeAdmins > 0)
+                {
+                    // Setup is effectively complete — backfill the marker file so any
+                    // downstream code that still reads it agrees.
+                    try { if (!File.Exists(_setupCompleteFile)) File.WriteAllText(_setupCompleteFile, DateTime.UtcNow.ToString("O")); }
+                    catch { /* best-effort; harmless if it fails */ }
+                    return false;
                 }
             }
             catch (Exception ex)
@@ -55,6 +87,7 @@ namespace SCIMServer.Web.Services
                 return true;
             }
 
+            // No active admin and no marker file → run the wizard.
             return !File.Exists(_setupCompleteFile);
         }
 
