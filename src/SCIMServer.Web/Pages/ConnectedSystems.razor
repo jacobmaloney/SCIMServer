@@ -126,6 +126,9 @@
                             <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditSystem(s.TenantId)">
                                 <i class="oi oi-pencil"></i>
                             </button>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => ClearData(s)" disabled="@clearing" title="Clear users + groups in this system (keeps the system, its tokens, and its config)">
+                                <i class="oi oi-eraser"></i>
+                            </button>
                             @if (s.TenantId != TenantRepository.DefaultTenantId)
                             {
                                 <button class="btn btn-sm btn-outline-warning" @onclick="() => DeactivateSystem(s)" title="Deactivate (soft delete — data stays in the database)">
@@ -759,6 +762,39 @@
         if (!confirmed) return;
         await TenantRepo.DeactivateAsync(s.TenantId);
         await Load();
+    }
+
+    // Per-card "clear data" — wipes users + groups in this Connected System but
+    // leaves the system itself (and its API tokens and config) alive.
+    private bool clearing;
+    private async Task ClearData(TenantStats s)
+    {
+        if (s.UserCount == 0 && s.GroupCount == 0)
+        {
+            await JS.InvokeVoidAsync("alert", $"'{s.Name}' is already empty — nothing to clear.");
+            return;
+        }
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            $"Clear ALL users ({s.UserCount}) and groups ({s.GroupCount}) in '{s.Name}'?\n\n" +
+            "The Connected System itself and its API tokens stay. This cannot be undone.");
+        if (!confirmed) return;
+
+        clearing = true;
+        StateHasChanged();
+        try
+        {
+            var removed = await TenantRepo.ClearDataAsync(s.TenantId);
+            await JS.InvokeVoidAsync("alert", $"Removed {removed} rows from '{s.Name}'.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"Clear failed: {ex.Message}");
+        }
+        finally
+        {
+            clearing = false;
+        }
     }
 
     // ─── Hard-delete (forever) ─────────────────────────────────────────────

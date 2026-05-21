@@ -82,6 +82,63 @@ namespace SCIMServer.DataAccess.Repositories
         }
 
         /// <summary>
+        /// Per-tenant data wipe: removes all Users and Groups (with every FK
+        /// dependent — memberships, role assignments, emails, phones, addresses)
+        /// scoped to the supplied tenant. The Connected System row itself stays
+        /// alive, as do its ApiTokens and SqlAccounts. Single transaction;
+        /// rolls back cleanly on failure. The Default tenant is exempt only
+        /// from the row delete in DeleteAsync; ClearDataAsync runs against any
+        /// tenant including Default.
+        /// Returns the number of (Users + Groups) rows removed.
+        /// </summary>
+        public async Task<int> ClearDataAsync(Guid id)
+        {
+            var p = new DynamicParameters();
+            p.Add("Id", id);
+
+            using var connection = CreateConnection();
+            using var tx = connection.BeginTransaction();
+            try
+            {
+                // Cross-tenant FK cleanup first (same shape as DeleteAsync).
+                await connection.ExecuteAsync(@"
+                    UPDATE Users SET ManagerId = NULL
+                     WHERE ManagerId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    UPDATE Groups SET OwnerId = NULL
+                     WHERE OwnerId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+
+                // Tenant-local dependents in bottom-up FK order.
+                await connection.ExecuteAsync(@"
+                    DELETE FROM GroupMembers
+                     WHERE GroupId IN (SELECT Id FROM Groups WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserRoles
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserAddresses
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserEmails
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+                await connection.ExecuteAsync(@"
+                    DELETE FROM UserPhoneNumbers
+                     WHERE UserId IN (SELECT Id FROM Users WHERE TenantId = @Id);", p, tx);
+
+                var groupsRemoved = await connection.ExecuteAsync(@"DELETE FROM Groups WHERE TenantId = @Id;", p, tx);
+                var usersRemoved  = await connection.ExecuteAsync(@"DELETE FROM Users WHERE TenantId = @Id;", p, tx);
+
+                tx.Commit();
+                return groupsRemoved + usersRemoved;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        /// <summary>
         /// Hard delete with full cascade. Removes the Connected System and every row
         /// that references it — users, groups, group memberships, user emails / phone
         /// numbers / addresses / role assignments, API tokens, and SqlAccounts. Refuses
