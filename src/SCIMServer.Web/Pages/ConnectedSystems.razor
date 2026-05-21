@@ -8,6 +8,9 @@
 @inject DemoSeedService DemoSeed
 @inject ActiveSystemState ActiveSystem
 @inject DataChangeNotifier DataChange
+@inject AuditLogService Audit
+@inject AuthenticationStateProvider AuthState
+@inject IHttpContextAccessor HttpCtx
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
@@ -821,7 +824,49 @@
             $"Deactivate '{s.Name}'? Users and groups in this system stay in the database but it will be hidden from active lists.");
         if (!confirmed) return;
         await TenantRepo.DeactivateAsync(s.TenantId);
+        await AuditDestructiveAsync("ConnectedSystem.Deactivate", s,
+            details: $"Soft delete — IsActive=0; users ({s.UserCount}) and groups ({s.GroupCount}) preserved.");
         await Load();
+    }
+
+    // Centralized audit emit so every destructive action on this page lands in
+    // the same shape. Captures the signed-in operator, the request's client IP,
+    // and the counts that were affected at the time the action ran — so a later
+    // forensic look can answer "who cleared system X on date Y and what did they
+    // wipe?" without needing to reconstruct state.
+    private async Task AuditDestructiveAsync(string action, TenantStats target, string details)
+    {
+        try
+        {
+            string userName = "unknown";
+            try
+            {
+                var auth = await AuthState.GetAuthenticationStateAsync();
+                userName = auth.User?.Identity?.Name ?? "unknown";
+            }
+            catch { /* best-effort */ }
+
+            var ip = HttpCtx.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var ua = HttpCtx.HttpContext?.Request.Headers["User-Agent"].ToString();
+
+            await Audit.LogAsync(
+                action: action,
+                resourceType: "Tenant",
+                resourceId: target.TenantId.ToString(),
+                userName: userName,
+                ipAddress: ip,
+                userAgent: ua,
+                statusCode: 200,
+                details: $"System '{target.Name}' (slug={target.Slug}). {details}",
+                newValue: $"UserCount={target.UserCount}, GroupCount={target.GroupCount}, TokenCount={target.TokenCount}");
+        }
+        catch (Exception ex)
+        {
+            // Audit writes must never block the user-facing flow. Log to console
+            // so we know the audit pipeline misbehaved, but don't surface to the
+            // operator — the destructive action already succeeded.
+            Console.WriteLine($"Audit write failed for {action} on {target.Slug}: {ex.Message}");
+        }
     }
 
     // Per-card "clear data" — wipes users + groups in this Connected System but
@@ -865,8 +910,11 @@
         StateHasChanged();
         try
         {
-            var removed = await TenantRepo.ClearDataAsync(clearingFor.TenantId);
-            var name = clearingFor.Name;
+            var target = clearingFor;
+            var removed = await TenantRepo.ClearDataAsync(target.TenantId);
+            await AuditDestructiveAsync("ConnectedSystem.ClearData", target,
+                details: $"Hard wipe of users + groups. {removed} rows removed (snapshot before clear: {target.UserCount} users, {target.GroupCount} groups). System, tokens, and config preserved.");
+            var name = target.Name;
             clearingFor = null;
             clearConfirmText = "";
             await Load();
@@ -917,16 +965,20 @@
         StateHasChanged();
         try
         {
-            var ok = await TenantRepo.DeleteAsync(deletingFor.TenantId);
+            var target = deletingFor;
+            var ok = await TenantRepo.DeleteAsync(target.TenantId);
             if (!ok)
             {
                 deleteError = "Delete refused — the Default system cannot be removed.";
                 return;
             }
 
+            await AuditDestructiveAsync("ConnectedSystem.DeleteForever", target,
+                details: $"Hard delete of Connected System and ALL referencing rows: {target.UserCount} users, {target.GroupCount} groups, {target.TokenCount} tokens, plus the Tenant row itself. Irreversible.");
+
             // If the active sidebar selection was the one we just nuked, drop it
             // so the rest of the app doesn't keep pointing at a dead Connected System.
-            if (ActiveSystem.ActiveSystem?.Id == deletingFor.TenantId)
+            if (ActiveSystem.ActiveSystem?.Id == target.TenantId)
             {
                 await ActiveSystem.SetAsync(null);
             }
