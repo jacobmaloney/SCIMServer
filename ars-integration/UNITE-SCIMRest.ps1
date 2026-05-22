@@ -53,6 +53,7 @@ function Disable-FinanceSuite       { _Do-Disable   -AppKey "FinanceSuite"     -
 
 function _Do-Provision {
     param([string]$AppKey, $Request)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $ctx  = _Get-SCIMContext -AppKey $AppKey
         $user = _Get-UserAttributes -Request $Request
@@ -61,23 +62,28 @@ function _Do-Provision {
             return
         }
 
-        $existing = _Find-SCIMUser -Ctx $ctx -UserName $user.sAMAccountName
+        $sam = "$($user.sAMAccountName)"
+        $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
         if ($existing) {
             $body = _Build-PatchActive -Active $true
             $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
-            _Report -AppKey $AppKey -Action "Provision" -Outcome "Re-enabled existing SCIM user" -ScimId $existing.id
+            $sw.Stop()
+            _Report -AppKey $AppKey -Action "Provision" -Verb "Re-enabled" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
         } else {
             $body = _Build-CreateUser -AppKey $AppKey -User $user
             $resp = _Invoke-SCIM -Method "POST" -Url $ctx.Uri -Token $ctx.Token -Body $body
-            _Report -AppKey $AppKey -Action "Provision" -Outcome "Created SCIM user" -ScimId $resp.id
+            $sw.Stop()
+            _Report -AppKey $AppKey -Action "Provision" -Verb "Created" -UserName $sam -ScimId $resp.id -ElapsedMs $sw.ElapsedMilliseconds
         }
     } catch {
+        $sw.Stop()
         _ReportError -AppKey $AppKey -Action "Provision" -Message (_Classify-NoResponse $_)
     }
 }
 
 function _Do-Disable {
     param([string]$AppKey, $Request)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $ctx  = _Get-SCIMContext -AppKey $AppKey
         $user = _Get-UserAttributes -Request $Request
@@ -86,16 +92,20 @@ function _Do-Disable {
             return
         }
 
-        $existing = _Find-SCIMUser -Ctx $ctx -UserName $user.sAMAccountName
+        $sam = "$($user.sAMAccountName)"
+        $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
         if (-not $existing) {
-            _Report -AppKey $AppKey -Action "Disable" -Outcome "No-op: user not present in target"
+            $sw.Stop()
+            _Report -AppKey $AppKey -Action "Disable" -Verb "Skipped" -UserName $sam -Note "user not present in target - no-op" -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
 
         $body = _Build-PatchActive -Active $false
         $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
-        _Report -AppKey $AppKey -Action "Disable" -Outcome "Disabled SCIM user" -ScimId $existing.id
+        $sw.Stop()
+        _Report -AppKey $AppKey -Action "Disable" -Verb "Disabled" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
     } catch {
+        $sw.Stop()
         _ReportError -AppKey $AppKey -Action "Disable" -Message (_Classify-NoResponse $_)
     }
 }
@@ -265,15 +275,6 @@ function _Get-SCIMContext {
     # happens to mint tokens with a 'scim_' prefix; other SCIM providers
     # don't. The token format is the SCIM provider's contract, not ours.
 
-    # Compute a token "shape" (length + first/last chars + scim_ prefix flag)
-    # that we attach to any error thrown from this dispatch. Write-Host output
-    # from ARS PowerShellActivity does NOT reach Change History; only thrown
-    # exceptions do. So shape goes in the error message itself.
-    $script:TokenShape = if ($token.Length -ge 8) {
-        "len={0}, prefix='{1}', suffix='{2}', startsWithScim_={3}" -f `
-            $token.Length, $token.Substring(0,5), $token.Substring($token.Length-4), $token.StartsWith("scim_")
-    } else { "len=$($token.Length) (short)" }
-
     # Tolerate trailing /Users - script appends it itself.
     $uri = $uri.TrimEnd('/')
     if ($uri.EndsWith("/Users")) { $uri = $uri.Substring(0, $uri.Length - "/Users".Length) }
@@ -332,55 +333,75 @@ function _Invoke-SCIM {
 # ============================================================================
 
 function _Report {
-    param([string]$AppKey, [string]$Action, [string]$Outcome, [string]$ScimId = $null)
-    $line = "[$AppKey/$Action] $Outcome"
-    if ($ScimId) { $line += " (scimId=$ScimId)" }
-    # ARS captures Write-Host output into the workflow Change History entry.
-    # PowerShellRequest does not expose a SetWorkflowLog method in 8.x.
-    Write-Host $line
+    param(
+        [string]$AppKey,
+        [string]$Action,
+        [string]$Verb,           # "Created", "Re-enabled", "Disabled", "Skipped"
+        [string]$UserName,
+        [string]$ScimId = $null,
+        [string]$Note   = $null,
+        [long]  $ElapsedMs = 0
+    )
+    # Human-readable label per AppKey (camelCase keys -> spaced labels).
+    $appLabel = switch ($AppKey) {
+        "HRConnect"         { "HR Connect" }
+        "ITHelpdeskPortal"  { "IT Helpdesk Portal" }
+        "FinanceSuite"      { "Finance Suite" }
+        default             { $AppKey }
+    }
+
+    # Build a one-line headline that ARS Change History will display in full.
+    $headline = "$Verb '$UserName' in $appLabel"
+    if ($ScimId) { $headline += " - SCIM id $ScimId" }
+    if ($Note)   { $headline += " - $Note" }
+    if ($ElapsedMs -gt 0) { $headline += " - ${ElapsedMs}ms" }
+
+    # Write-Output goes to the workflow pipeline and ARS captures it as the
+    # activity's return value, which renders in Change History below the
+    # "Activity successfully performed the script" line.
+    Write-Output $headline
 }
 
 function _ReportError {
     param([string]$AppKey, [string]$Action, [string]$Message)
-    $line = "[$AppKey/$Action] ERROR: $Message"
-    Write-Host $line
-    # throw surfaces the message into the workflow Change History as an error.
-    throw $line
+    $appLabel = switch ($AppKey) {
+        "HRConnect"         { "HR Connect" }
+        "ITHelpdeskPortal"  { "IT Helpdesk Portal" }
+        "FinanceSuite"      { "Finance Suite" }
+        default             { $AppKey }
+    }
+    # throw is the ONLY thing ARS surfaces as an error in Change History.
+    throw "[$appLabel/$Action] $Message"
 }
 
 function _Classify-NoResponse {
     param($Err)
     $msg = if ($Err.Exception.Message) { $Err.Exception.Message } else { "$Err" }
     $resp = $Err.Exception.Response
-    # Token shape diagnostic captured by _Get-SCIMContext. Append on auth-shaped errors.
-    $shape = if ($script:TokenShape) { "  [tokenShape: $($script:TokenShape)]" } else { "" }
-    # Pull the response body whenever there is one — SCIM error responses are JSON
-    # with a 'detail' field that names the actual exception. Without this we are
-    # blind on 4xx/5xx.
+
+    # Capture the SCIM error response body when there is one - its 'detail'
+    # field names the real failure (e.g. "NullReferenceException: ...").
     $body = ""
     if ($resp) {
         try {
-            $stream = $resp.GetResponseStream()
-            if ($stream) {
-                $sr = New-Object System.IO.StreamReader($stream)
-                $body = $sr.ReadToEnd()
-                $sr.Close()
-                if ($body.Length -gt 500) { $body = $body.Substring(0, 500) + "...(truncated)" }
-            }
+            $sr = New-Object System.IO.StreamReader($resp.GetResponseStream())
+            $body = $sr.ReadToEnd(); $sr.Close()
+            if ($body.Length -gt 400) { $body = $body.Substring(0, 400) + "..." }
         } catch { }
     }
-    $bodySuffix = if ($body) { "  [responseBody: $body]" } else { "" }
+    $bodyTail = if ($body) { " - server said: $body" } else { "" }
+
     if ($resp) {
-        $code = [int]$resp.StatusCode
-        switch ($code) {
-            401 { return "401 Unauthorized - server requires 'Bearer scim_<value>'. Paste the FULL mint string from SCIMServer admin UI into the MMC token parameter.$shape$bodySuffix" }
-            403 { return "403 Forbidden - token is valid but scoped to a different Connected System.$bodySuffix" }
-            404 { return "404 Not Found - check the URI; the slug may not match a Connected System.$bodySuffix" }
-            409 { return "409 Conflict - user already exists; race condition between Find and Create.$bodySuffix" }
-            429 { return "429 Rate limited - back off and retry.$bodySuffix" }
+        switch ([int]$resp.StatusCode) {
+            401 { return "401 Unauthorized - token rejected. Paste the FULL 'scim_<value>' mint string into the workflow token parameter.$bodyTail" }
+            403 { return "403 Forbidden - token is valid but scoped to a different Connected System.$bodyTail" }
+            404 { return "404 Not Found - the URI's tenant slug does not match any Connected System.$bodyTail" }
+            409 { return "409 Conflict - user already exists; benign race between Find and Create.$bodyTail" }
+            429 { return "429 Rate limited - back off and retry.$bodyTail" }
             default {
-                if ($code -ge 500) { return "$code Server error.$bodySuffix" }
-                return "$code $msg.$bodySuffix"
+                $code = [int]$resp.StatusCode
+                if ($code -ge 500) { return "$code Server error.$bodyTail" }
+                return "$code $msg.$bodyTail"
             }
         }
     }
