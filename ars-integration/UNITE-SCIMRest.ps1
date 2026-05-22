@@ -100,27 +100,25 @@ function Dispatch-AllSCIM {
     # Compose the human-readable summary.
     $lines = if ($script:DispatchResultLines) { @($script:DispatchResultLines) } else { @() }
     if ($lines.Count -eq 0) {
-        # Nothing to publish - the workflow fired on a non-SCIM property change.
+        # Workflow fired on a non-SCIM property change (e.g. self-modify from
+        # the failure auto-revert). Silent no-op.
         return
     }
-    $summary = $lines -join "`r`n"
+    $summary = "SCIM Provisioning Hub - per-app outcomes:`r`n" + ($lines -join "`r`n")
 
-    # Surface via the workflow runtime parameter SCIM-DispatchResults so the
-    # post-AddRecordToReport activity (which references that parameter through
-    # a q1:WorkflowParameterToken) renders the summary inline in Change History.
-    # We try every API name the ARS docs mention because the exact one varies
-    # across 8.x point releases.
-    foreach ($call in @(
-        { $Workflow.SetParameter("SCIM-DispatchResults", $summary) },
-        { $Workflow.SetParam("SCIM-DispatchResults", $summary) },
-        { $Workflow.RuntimeParameters["SCIM-DispatchResults"] = $summary },
-        { $Workflow.Parameters["SCIM-DispatchResults"] = $summary }
-    )) {
-        try { & $call; break } catch { }
-    }
-
-    # Belt and suspenders: pipeline output for the activity ReturnValue.
+    # Reliability matters more than aesthetics here. ARS 8.2 surfaces THREE
+    # things from a PowerShellActivity into Change History:
+    #   - thrown exceptions (rendered with the activity)
+    #   - the script's return value (rendered as the activity's output but
+    #     not always expanded by default)
+    #   - explicit AddRecordToReport activities (static text only)
+    #
+    # The most reliable channel for showing the multi-line summary is a
+    # final throw. The PowerShellActivity in the workflow is configured with
+    # SuppressError="True" so the throw does not abort the workflow - it
+    # only attaches the text to the activity entry in Change History.
     Write-Output $summary
+    throw $summary
 }
 
 # Legacy per-app entry points kept for back-compat with workflow XAML that
