@@ -145,6 +145,24 @@ namespace SCIMServer.Web.Controllers
                 SetLocationHeader("Users", createdUser.Id);
                 return Created(createdUser.Meta.Location, createdUser);
             }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                // 2601 = unique index violation, 2627 = unique constraint violation.
+                // Race between our 'existing' check and the INSERT, or a tenant-scoped
+                // unique constraint catching a duplicate userName. Either way, this
+                // is the SCIM-defined 409 Conflict.
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Warning, "SCIM/Users/POST",
+                    $"CreateUser rejected (unique constraint): {sqlEx.Message}",
+                    details: $"userName={user.UserName}");
+                return ScimConflict($"User with userName '{user.UserName}' already exists");
+            }
+            catch (System.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Warning, "SCIM/Users/POST",
+                    $"CreateUser rejected (unique constraint): {sqlEx.Message}",
+                    details: $"userName={user.UserName}");
+                return ScimConflict($"User with userName '{user.UserName}' already exists");
+            }
             catch (Exception ex)
             {
                 await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/POST",

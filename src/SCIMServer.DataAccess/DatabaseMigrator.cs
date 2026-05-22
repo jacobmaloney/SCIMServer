@@ -515,6 +515,43 @@ END;
 "
             });
 
+            // Migration 13: Make Users.UserName and Groups.DisplayName unique PER TENANT,
+            // not globally. The original CreateDatabase.sql had:
+            //   CONSTRAINT UQ_Users_UserName UNIQUE (UserName)
+            //   CONSTRAINT UQ_Groups_DisplayName UNIQUE (DisplayName)
+            // which broke SCIM multi-tenancy - a userName like "aaamaster" provisioned
+            // into one Connected System could not be provisioned into another, since
+            // the constraint was global. Tenant isolation is the whole point of the
+            // /t/{slug}/ route. Replace with composite (TenantId, UserName / DisplayName)
+            // uniqueness so different tenants are independent identity stores.
+            migrations.Add(new SchemaMigration
+            {
+                Version = 13,
+                Name = "Tenant-scoped uniqueness on Users.UserName + Groups.DisplayName",
+                Description = "Replace global UQ_Users_UserName / UQ_Groups_DisplayName with composite (TenantId, ...) uniqueness so the same userName/displayName can legitimately exist in two tenants.",
+                SqlScript = @"
+-- Users: drop global, add tenant-scoped
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Users_UserName' AND object_id = OBJECT_ID('dbo.Users'))
+BEGIN
+    ALTER TABLE [dbo].[Users] DROP CONSTRAINT [UQ_Users_UserName];
+END;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Users_TenantId_UserName' AND object_id = OBJECT_ID('dbo.Users'))
+BEGIN
+    CREATE UNIQUE NONCLUSTERED INDEX [UQ_Users_TenantId_UserName] ON [dbo].[Users]([TenantId], [UserName]);
+END;
+
+-- Groups: same treatment
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Groups_DisplayName' AND object_id = OBJECT_ID('dbo.Groups'))
+BEGIN
+    ALTER TABLE [dbo].[Groups] DROP CONSTRAINT [UQ_Groups_DisplayName];
+END;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Groups_TenantId_DisplayName' AND object_id = OBJECT_ID('dbo.Groups'))
+BEGIN
+    CREATE UNIQUE NONCLUSTERED INDEX [UQ_Groups_TenantId_DisplayName] ON [dbo].[Groups]([TenantId], [DisplayName]);
+END;
+"
+            });
+
             // Filter migrations that haven't been applied yet
             return migrations.Where(m => m.Version > analysis.CurrentVersion).OrderBy(m => m.Version).ToList();
         }

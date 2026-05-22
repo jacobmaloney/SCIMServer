@@ -54,9 +54,12 @@ CREATE TABLE [dbo].[Users] (
     -- Portal administrator flag
     [IsAdmin] BIT NOT NULL DEFAULT 0,
     CONSTRAINT [PK_Users] PRIMARY KEY CLUSTERED ([Id]),
-    CONSTRAINT [FK_Users_Manager] FOREIGN KEY ([ManagerId]) REFERENCES [Users]([Id]),
-    CONSTRAINT [UQ_Users_UserName] UNIQUE ([UserName])
+    CONSTRAINT [FK_Users_Manager] FOREIGN KEY ([ManagerId]) REFERENCES [Users]([Id])
 );
+
+-- userName is unique PER TENANT, not globally. Different tenants are independent
+-- SCIM identity stores; the same userName can legitimately exist in two of them.
+CREATE UNIQUE NONCLUSTERED INDEX [UQ_Users_TenantId_UserName] ON [Users]([TenantId], [UserName]);
 
 CREATE INDEX [IX_Users_UserName] ON [Users]([UserName]);
 CREATE INDEX [IX_Users_ExternalId] ON [Users]([ExternalId]);
@@ -123,7 +126,6 @@ CREATE TABLE [dbo].[Groups] (
     [LastModified] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [Version] INT NOT NULL DEFAULT 1,
     CONSTRAINT [PK_Groups] PRIMARY KEY CLUSTERED ([Id]),
-    CONSTRAINT [UQ_Groups_DisplayName] UNIQUE ([DisplayName]),
     CONSTRAINT [FK_Groups_Owner] FOREIGN KEY ([OwnerId]) REFERENCES [Users]([Id])
 );
 
