@@ -42,6 +42,66 @@ try {
 # in UNITE-SCIMMappings. Defaults to Disable.
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# Per-app entry points - workflow XAML wires ONE of these per app, each gated
+# by an IfElse that checks whether SCIM-<App> was modified in this submit.
+# Each call processes exactly its own app, then throws a one-app summary so
+# Change History gets a per-app activity entry with the structured outcome.
+# ----------------------------------------------------------------------------
+
+function Dispatch-HRConnect        { _Dispatch-OneApp -AppKey "HRConnect"        -Request $Request }
+function Dispatch-ITHelpdeskPortal { _Dispatch-OneApp -AppKey "ITHelpdeskPortal" -Request $Request }
+function Dispatch-FinanceSuite     { _Dispatch-OneApp -AppKey "FinanceSuite"     -Request $Request }
+
+function _Dispatch-OneApp {
+    param([string]$AppKey, $Request)
+
+    # Fresh buffer per activity so the per-app throw only contains THIS app's lines.
+    $script:DispatchResultLines = New-Object System.Collections.ArrayList
+
+    $newValue = "$($Request.Get("SCIM-$AppKey"))"
+    if ([string]::IsNullOrEmpty($newValue)) {
+        # IfElse upstream should have gated this; defensive no-op.
+        return
+    }
+
+    $isProvision = ($newValue -ieq "true")
+    $isRemove    = ($newValue -ieq "false")
+    if (-not ($isProvision -or $isRemove)) {
+        throw "[$AppKey] Unexpected SCIM-$AppKey value '$newValue' (expected 'true' or 'false')."
+    }
+
+    $appLabel = switch ($AppKey) {
+        "HRConnect"         { "HR Connect" }
+        "ITHelpdeskPortal"  { "IT Helpdesk Portal" }
+        "FinanceSuite"      { "Finance Suite" }
+        default             { $AppKey }
+    }
+
+    try {
+        if ($isProvision) { _Do-Provision -AppKey $AppKey -Request $Request }
+        else              { _Do-Remove    -AppKey $AppKey -Request $Request }
+    } catch {
+        $err = "$($_.Exception.Message)"
+        $revertTo = -not $isProvision
+        [void]$script:DispatchResultLines.Add("[ERROR] $appLabel - $err")
+        try {
+            Set-QADObject $Request.DN -ObjectAttributes @{ "SCIM-$AppKey" = $revertTo } | Out-Null
+            [void]$script:DispatchResultLines.Add("[INFO]  $appLabel - SCIM-$AppKey auto-reverted to $revertTo; re-toggle to retry")
+        } catch {
+            [void]$script:DispatchResultLines.Add("[WARN]  $appLabel - could not auto-revert SCIM-$AppKey ($($_.Exception.Message)); uncheck + re-check manually")
+        }
+    }
+
+    # Throw the per-app summary so it lands in this activity's Change History entry.
+    # The activity has SuppressError=True so the throw does not abort the workflow.
+    if ($script:DispatchResultLines.Count -gt 0) {
+        throw ($script:DispatchResultLines -join "`r`n")
+    }
+}
+
+# Legacy bulk dispatcher - kept for back-compat, calls all per-app handlers in
+# sequence. Not used by the new workflow XAML.
 function Dispatch-AllSCIM {
     if (-not $script:SCIMMappings) {
         throw "SCIMMappings not loaded - the mapping table from UNITE-SCIMMappings must be concatenated into this ScriptModule."
@@ -161,9 +221,37 @@ function _Do-Provision {
             _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
         } else {
             $body = _Build-CreateUser -AppKey $AppKey -User $user
-            $resp = _Invoke-SCIM -Method "POST" -Url $ctx.Uri -Token $ctx.Token -Body $body
-            $sw.Stop()
-            _Report -AppKey $AppKey -Action "Provision" -Verb "Created" -UserName $sam -ScimId $resp.id -ElapsedMs $sw.ElapsedMilliseconds
+            try {
+                $resp = _Invoke-SCIM -Method "POST" -Url $ctx.Uri -Token $ctx.Token -Body $body
+                $sw.Stop()
+                _Report -AppKey $AppKey -Action "Provision" -Verb "Created" -UserName $sam -ScimId $resp.id -ElapsedMs $sw.ElapsedMilliseconds
+            } catch {
+                # 409 Conflict on POST means the server says the user already
+                # exists - our initial Find missed it (case sensitivity, soft-
+                # delete, partial index, race). Re-find by userName and treat
+                # as the AlreadyActive / Reactivated outcome instead of bouncing
+                # back through the failure path.
+                $isConflict = $false
+                $r = $_.Exception.Response
+                if ($r -and [int]$r.StatusCode -eq 409) { $isConflict = $true }
+                if (-not $isConflict) { throw }
+
+                $retry = _Find-SCIMUser -Ctx $ctx -UserName $sam
+                if (-not $retry) {
+                    # Server says 409 but we still can't find it - genuinely confused.
+                    _ReportError -AppKey $AppKey -Action "Provision" -Message "Server reported 409 Conflict but a follow-up Find returned no user. Manual cleanup may be needed."
+                    return
+                }
+                if ($retry.active -eq $true) {
+                    $sw.Stop()
+                    _Report -AppKey $AppKey -Action "Provision" -Verb "AlreadyActive" -UserName $sam -ScimId $retry.id -ElapsedMs $sw.ElapsedMilliseconds
+                } else {
+                    $patchBody = _Build-PatchActive -Active $true
+                    [void](_Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $retry.id) -Token $ctx.Token -Body $patchBody)
+                    $sw.Stop()
+                    _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $sam -ScimId $retry.id -ElapsedMs $sw.ElapsedMilliseconds
+                }
+            }
         }
     } catch {
         $sw.Stop()
@@ -497,15 +585,16 @@ function _Report {
         "FinanceSuite"      { "Finance Suite" }
         default             { $AppKey }
     }
+    # Consistent shape: "[ICON]  AppLabel - action for user, context"
     $line = switch ($Verb) {
-        "Created"           { "[OK]    Connected $UserName to $appLabel - new SCIM identity created" }
-        "Reactivated"       { "[OK]    Re-enabled $UserName in $appLabel - existing identity reactivated" }
-        "AlreadyActive"     { "[INFO]  $UserName is already provisioned and active in $appLabel - connection healthy, no change needed" }
-        "Disabled"          { "[OK]    Disconnected $UserName from $appLabel - identity disabled (record retained)" }
-        "AlreadyInactive"   { "[INFO]  $UserName is already disabled in $appLabel - no change needed" }
-        "Deleted"           { "[OK]    Removed $UserName from $appLabel - identity deleted per app policy" }
-        "SkippedNotPresent" { "[INFO]  $UserName has no identity in $appLabel - nothing to disconnect" }
-        default             { "[OK]    $Verb $UserName in $appLabel" }
+        "Created"           { "[OK]    $appLabel - new account provisioned for $UserName, AD identity linked" }
+        "Reactivated"       { "[OK]    $appLabel - existing account reactivated for $UserName, was disabled" }
+        "AlreadyActive"     { "[INFO]  $appLabel - account already exists for $UserName, linked to AD identity - no change needed" }
+        "Disabled"          { "[OK]    $appLabel - account disabled for $UserName, assignment removed (record retained)" }
+        "AlreadyInactive"   { "[INFO]  $appLabel - account already disabled for $UserName - no change needed" }
+        "Deleted"           { "[OK]    $appLabel - account deleted for $UserName per tenant policy" }
+        "SkippedNotPresent" { "[INFO]  $appLabel - no account found for $UserName, nothing to disable - assignment marker cleared" }
+        default             { "[OK]    $appLabel - $Verb for $UserName" }
     }
     if ($ScimId)          { $line += "  (scimId=$ScimId)" }
     if ($Note)            { $line += "  ($Note)" }
