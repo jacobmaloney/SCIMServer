@@ -74,46 +74,52 @@ function Dispatch-AllSCIM {
             $anyFailure = $true
             $errMsg = "$($_.Exception.Message)"
             $revertTo = -not $isProvision   # if Provision failed, was false before
+
+            # Buffer the failure line through _Report-style accounting so the
+            # final summary includes it. The exception object from _ReportError
+            # has already been formatted with [App/Action] - keep it whole.
+            $appLabel = switch ($app) {
+                "HRConnect"         { "HR Connect" }
+                "ITHelpdeskPortal"  { "IT Helpdesk Portal" }
+                "FinanceSuite"      { "Finance Suite" }
+                default             { $app }
+            }
+            if (-not $script:DispatchResultLines) { $script:DispatchResultLines = New-Object System.Collections.ArrayList }
+            [void]$script:DispatchResultLines.Add("[ERROR] $appLabel - $errMsg")
+
+            # Revert the AD attribute so the user can retry by re-toggling.
             try {
                 Set-QADObject $Request.DN -ObjectAttributes @{ "SCIM-$app" = $revertTo } | Out-Null
-                Write-Output "[$app] FAILED: $errMsg"
-                Write-Output "[$app] Auto-reverted SCIM-$app to $revertTo so the request shows the actual target state. Re-toggle the checkbox to retry."
+                [void]$script:DispatchResultLines.Add("[INFO]  $appLabel - SCIM-$app auto-reverted to $revertTo; re-toggle to retry")
             } catch {
-                Write-Output "[$app] FAILED: $errMsg"
-                Write-Output "[$app] WARNING: could not auto-revert SCIM-$app to $revertTo ($($_.Exception.Message)). Uncheck and re-check manually to retry."
+                [void]$script:DispatchResultLines.Add("[WARN]  $appLabel - could not auto-revert SCIM-$app ($($_.Exception.Message)); uncheck + re-check manually")
             }
         }
     }
 
     # Compose the human-readable summary.
     $lines = if ($script:DispatchResultLines) { @($script:DispatchResultLines) } else { @() }
-    if ($anyFailure) {
-        $lines += ""
-        $lines += "One or more SCIM targets failed; their checkboxes were auto-reverted. Re-toggle to retry."
-    }
     if ($lines.Count -eq 0) {
         # Nothing to publish - the workflow fired on a non-SCIM property change.
-        # No-op silently; nothing to do.
         return
     }
-    $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss UTC")
-    $summary = "SCIM dispatch @ $stamp`r`n" + ($lines -join "`r`n")
+    $summary = $lines -join "`r`n"
 
-    # Publish to the user's 'info' (Notes) attribute. ARS Change History shows
-    # this as a "Properties Changed" entry alongside the SCIM-* boolean toggles,
-    # which is the only mechanism that has reliably surfaced multi-line content
-    # in this workflow report. The dispatcher's own early-exit (no SCIM-*
-    # attribute changes -> return without action) prevents an infinite loop
-    # when the info update re-triggers the post-modify workflow.
-    try {
-        Set-QADObject $Request.DN -ObjectAttributes @{ info = $summary } | Out-Null
-    } catch {
-        # Non-fatal: if we can't write info (e.g. ACL), at least the script's
-        # pipeline output survives and is visible if the operator expands the
-        # activity in MMC.
+    # Surface via the workflow runtime parameter SCIM-DispatchResults so the
+    # post-AddRecordToReport activity (which references that parameter through
+    # a q1:WorkflowParameterToken) renders the summary inline in Change History.
+    # We try every API name the ARS docs mention because the exact one varies
+    # across 8.x point releases.
+    foreach ($call in @(
+        { $Workflow.SetParameter("SCIM-DispatchResults", $summary) },
+        { $Workflow.SetParam("SCIM-DispatchResults", $summary) },
+        { $Workflow.RuntimeParameters["SCIM-DispatchResults"] = $summary },
+        { $Workflow.Parameters["SCIM-DispatchResults"] = $summary }
+    )) {
+        try { & $call; break } catch { }
     }
 
-    # Also emit to pipeline so the activity's ReturnValue carries the data.
+    # Belt and suspenders: pipeline output for the activity ReturnValue.
     Write-Output $summary
 }
 
