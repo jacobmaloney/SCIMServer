@@ -85,37 +85,36 @@ function Dispatch-AllSCIM {
         }
     }
 
-    # Publish results. ARS's PowerShellActivity does not by default surface
-    # per-line Write-Output into Change History below "Activity successfully
-    # performed". We compose a multi-line summary and try every channel ARS
-    # exposes so SOMETHING lands in the visible report.
+    # Compose the human-readable summary.
     $lines = if ($script:DispatchResultLines) { @($script:DispatchResultLines) } else { @() }
     if ($anyFailure) {
         $lines += ""
         $lines += "One or more SCIM targets failed; their checkboxes were auto-reverted. Re-toggle to retry."
     }
     if ($lines.Count -eq 0) {
-        $lines = @("[INFO]  No SCIM-* attributes were modified in this submit - nothing to dispatch.")
+        # Nothing to publish - the workflow fired on a non-SCIM property change.
+        # No-op silently; nothing to do.
+        return
     }
-    $summary = $lines -join "`r`n"
+    $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss UTC")
+    $summary = "SCIM dispatch @ $stamp`r`n" + ($lines -join "`r`n")
 
-    # Channel 1: workflow runtime parameter - same mechanism used by built-in
-    # ARS workflows like UserExists ("User Exists Return Value: 0" in Change
-    # History). The post-AddRecordToReport activity references this parameter
-    # via a WorkflowParameterToken so its value renders inline.
-    foreach ($call in @(
-        { $Workflow.SetParameter("SCIM-DispatchResults", $summary) },
-        { $Workflow.RuntimeParameters["SCIM-DispatchResults"] = $summary },
-        { $Workflow.SetParam("SCIM-DispatchResults", $summary) }
-    )) {
-        try { & $call; break } catch { }
+    # Publish to the user's 'info' (Notes) attribute. ARS Change History shows
+    # this as a "Properties Changed" entry alongside the SCIM-* boolean toggles,
+    # which is the only mechanism that has reliably surfaced multi-line content
+    # in this workflow report. The dispatcher's own early-exit (no SCIM-*
+    # attribute changes -> return without action) prevents an infinite loop
+    # when the info update re-triggers the post-modify workflow.
+    try {
+        Set-QADObject $Request.DN -ObjectAttributes @{ info = $summary } | Out-Null
+    } catch {
+        # Non-fatal: if we can't write info (e.g. ACL), at least the script's
+        # pipeline output survives and is visible if the operator expands the
+        # activity in MMC.
     }
 
-    # Channel 2: pipeline output (activity ReturnValue).
+    # Also emit to pipeline so the activity's ReturnValue carries the data.
     Write-Output $summary
-
-    # Channel 3: explicit return so PowerShell host sees a final scalar.
-    return $summary
 }
 
 # Legacy per-app entry points kept for back-compat with workflow XAML that
