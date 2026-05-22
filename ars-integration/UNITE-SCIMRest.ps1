@@ -208,23 +208,31 @@ function _Do-Provision {
         }
 
         $sam = "$($user.sAMAccountName)"
-        $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
+        $appUserName = _Get-AppUserName -AppKey $AppKey -User $user
+        if (-not $appUserName) {
+            $src = _Describe-UserNameSource -AppKey $AppKey
+            _ReportError -AppKey $AppKey -Action "Provision" -Message "Cannot determine SCIM userName for $sam - source $src is empty in AD. Populate it and re-toggle."
+            return
+        }
+        $existing = _Find-SCIMUser -Ctx $ctx -UserName $appUserName
         if ($existing) {
-            if ($existing.active -eq $true) {
+            # 'active' missing OR true == already-active. Only explicit false
+            # means the record exists but disabled, in which case we reactivate.
+            if ($existing.active -ne $false) {
                 $sw.Stop()
-                _Report -AppKey $AppKey -Action "Provision" -Verb "AlreadyActive" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+                _Report -AppKey $AppKey -Action "Provision" -Verb "AlreadyActive" -UserName $appUserName -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
                 return
             }
             $body = _Build-PatchActive -Active $true
             $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $appUserName -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
         } else {
             $body = _Build-CreateUser -AppKey $AppKey -User $user
             try {
                 $resp = _Invoke-SCIM -Method "POST" -Url $ctx.Uri -Token $ctx.Token -Body $body
                 $sw.Stop()
-                _Report -AppKey $AppKey -Action "Provision" -Verb "Created" -UserName $sam -ScimId $resp.id -ElapsedMs $sw.ElapsedMilliseconds
+                _Report -AppKey $AppKey -Action "Provision" -Verb "Created" -UserName $appUserName -ScimId $resp.id -ElapsedMs $sw.ElapsedMilliseconds
             } catch {
                 # 409 Conflict on POST means the server says the user already
                 # exists - our initial Find missed it (case sensitivity, soft-
@@ -236,20 +244,23 @@ function _Do-Provision {
                 if ($r -and [int]$r.StatusCode -eq 409) { $isConflict = $true }
                 if (-not $isConflict) { throw }
 
-                $retry = _Find-SCIMUser -Ctx $ctx -UserName $sam
+                $retry = _Find-SCIMUser -Ctx $ctx -UserName $appUserName
                 if (-not $retry) {
                     # Server says 409 but we still can't find it - genuinely confused.
                     _ReportError -AppKey $AppKey -Action "Provision" -Message "Server reported 409 Conflict but a follow-up Find returned no user. Manual cleanup may be needed."
                     return
                 }
-                if ($retry.active -eq $true) {
+                # Treat "active missing or true" as active. Some SCIM servers
+                # omit the 'active' property when it equals the default (true).
+                # Only an explicit false means we need to reactivate via PATCH.
+                if ($retry.active -ne $false) {
                     $sw.Stop()
-                    _Report -AppKey $AppKey -Action "Provision" -Verb "AlreadyActive" -UserName $sam -ScimId $retry.id -ElapsedMs $sw.ElapsedMilliseconds
+                    _Report -AppKey $AppKey -Action "Provision" -Verb "AlreadyActive" -UserName $appUserName -ScimId $retry.id -ElapsedMs $sw.ElapsedMilliseconds
                 } else {
                     $patchBody = _Build-PatchActive -Active $true
                     [void](_Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $retry.id) -Token $ctx.Token -Body $patchBody)
                     $sw.Stop()
-                    _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $sam -ScimId $retry.id -ElapsedMs $sw.ElapsedMilliseconds
+                    _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $appUserName -ScimId $retry.id -ElapsedMs $sw.ElapsedMilliseconds
                 }
             }
         }
@@ -283,22 +294,28 @@ function _Do-Disable {
         }
 
         $sam = "$($user.sAMAccountName)"
-        $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
+        $appUserName = _Get-AppUserName -AppKey $AppKey -User $user
+        if (-not $appUserName) {
+            $src = _Describe-UserNameSource -AppKey $AppKey
+            _ReportError -AppKey $AppKey -Action "Disable" -Message "Cannot determine SCIM userName for $sam - source $src is empty in AD."
+            return
+        }
+        $existing = _Find-SCIMUser -Ctx $ctx -UserName $appUserName
         if (-not $existing) {
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Disable" -Verb "SkippedNotPresent" -UserName $sam -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Disable" -Verb "SkippedNotPresent" -UserName $appUserName -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
         if ($existing.active -eq $false) {
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Disable" -Verb "AlreadyInactive" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Disable" -Verb "AlreadyInactive" -UserName $appUserName -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
 
         $body = _Build-PatchActive -Active $false
         $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
         $sw.Stop()
-        _Report -AppKey $AppKey -Action "Disable" -Verb "Disabled" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+        _Report -AppKey $AppKey -Action "Disable" -Verb "Disabled" -UserName $appUserName -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
     } catch {
         $sw.Stop()
         _ReportError -AppKey $AppKey -Action "Disable" -Message (_Classify-NoResponse $_)
@@ -317,16 +334,22 @@ function _Do-Delete {
         }
 
         $sam = "$($user.sAMAccountName)"
-        $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
+        $appUserName = _Get-AppUserName -AppKey $AppKey -User $user
+        if (-not $appUserName) {
+            $src = _Describe-UserNameSource -AppKey $AppKey
+            _ReportError -AppKey $AppKey -Action "Delete" -Message "Cannot determine SCIM userName for $sam - source $src is empty in AD."
+            return
+        }
+        $existing = _Find-SCIMUser -Ctx $ctx -UserName $appUserName
         if (-not $existing) {
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Delete" -Verb "SkippedNotPresent" -UserName $sam -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Delete" -Verb "SkippedNotPresent" -UserName $appUserName -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
 
         $resp = _Invoke-SCIM -Method "DELETE" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $null
         $sw.Stop()
-        _Report -AppKey $AppKey -Action "Delete" -Verb "Deleted" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+        _Report -AppKey $AppKey -Action "Delete" -Verb "Deleted" -UserName $appUserName -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
     } catch {
         $sw.Stop()
         _ReportError -AppKey $AppKey -Action "Delete" -Message (_Classify-NoResponse $_)
@@ -337,6 +360,35 @@ function _Do-Delete {
 # ============================================================================
 # MAPPING ENGINE - reads $script:SCIMMappings from UNITE-SCIMMappings
 # ============================================================================
+
+# Resolves the SCIM userName for this app by running the mapping's "userName"
+# entry through _Resolve-MappingValue. Returns $null if the source AD attribute
+# is empty - which is a hard-stop for both Find (no key to search on) and
+# Provision (server will 400 with "userName is required").
+function _Get-AppUserName {
+    param([string]$AppKey, $User)
+    $mapping = Get-SCIMMapping -AppKey $AppKey
+    if (-not $mapping.ContainsKey("userName")) { return $null }
+    $val = _Resolve-MappingValue -Source $mapping["userName"] -User $User
+    if ($null -eq $val -or $val -eq "") { return $null }
+    return "$val"
+}
+
+# Human-readable description of where the app's userName comes from, for error
+# messages. "=literal" -> the literal; "{ ... }" scriptblock -> "<computed>";
+# plain string -> the AD attribute name.
+function _Describe-UserNameSource {
+    param([string]$AppKey)
+    $mapping = Get-SCIMMapping -AppKey $AppKey
+    if (-not $mapping.ContainsKey("userName")) { return "<unmapped>" }
+    $src = $mapping["userName"]
+    if ($src -is [scriptblock]) { return "<computed>" }
+    if ($src -is [string]) {
+        if ($src.StartsWith("=")) { return "literal '$($src.Substring(1))'" }
+        return "AD attribute '$src'"
+    }
+    return "$src"
+}
 
 function _Build-CreateUser {
     param([string]$AppKey, $User)
@@ -372,7 +424,15 @@ function _Resolve-MappingValue {
 
     $raw = $null
     if ($Source -is [scriptblock]) {
-        try { $raw = (& $Source $User) } catch { return $null }
+        try { $raw = (& $Source $User) } catch {
+            # Don't swallow silently - a future scriptblock for a required
+            # field (e.g. userName) failing this way would surface only as
+            # "source <computed> is empty in AD" with no hint of the real
+            # error. Write to the script trace so the operator can see it
+            # without breaking the dispatch.
+            Write-Output "[WARN] scriptblock mapping threw: $($_.Exception.Message)"
+            return $null
+        }
     }
     elseif ($Source -is [string]) {
         if ($Source.StartsWith("=")) { return $Source.Substring(1) }
@@ -516,6 +576,13 @@ function _Get-SCIMContext {
     $uri = $uri.TrimEnd('/')
     if ($uri.EndsWith("/Users")) { $uri = $uri.Substring(0, $uri.Length - "/Users".Length) }
 
+    # Warn (don't block) when the URI is plain HTTP. The cert-trust callback
+    # at the top of this script makes http silently work, which is convenient
+    # for the lab but dangerous in production - tokens travel in cleartext.
+    if ($uri -notmatch '^https://') {
+        Write-Output "[WARN] $AppKey URI is not HTTPS ('$uri') - bearer token will travel in cleartext. Use only for lab/demo."
+    }
+
     return @{
         AppKey = $AppKey
         Uri    = "$uri/Users"
@@ -533,8 +600,16 @@ function _Find-SCIMUser {
     param($Ctx, [string]$UserName)
     if ($Ctx.DryRun) { return $null }
 
-    $filter = [System.Web.HttpUtility]::UrlEncode(("userName eq `"{0}`"" -f $UserName))
-    $url    = "$($Ctx.Uri)?filter=$filter"
+    # SCIM filter strings escape backslash and double-quote per RFC 7644 sec 3.4.2.2.
+    # Without this, a userName containing " or \ produces a syntactically invalid
+    # filter (e.g. `userName eq "foo"bar"`) - URL-encoding can't fix bad SCIM syntax.
+    # NB: in PowerShell -replace, the replacement string is .NET regex
+    # replacement syntax where backslash is NOT special; only '$' is. So we
+    # write '\\' (2 chars) to emit two backslashes, and '\"' (2 chars) to emit
+    # backslash + quote.
+    $escaped = $UserName -replace '\\','\\' -replace '"','\"'
+    $filter  = [System.Web.HttpUtility]::UrlEncode(("userName eq `"{0}`"" -f $escaped))
+    $url     = "$($Ctx.Uri)?filter=$filter"
     $resp   = _Invoke-SCIM -Method "GET" -Url $url -Token $Ctx.Token -Body $null
     if ($resp.Resources -and $resp.Resources.Count -gt 0) { return $resp.Resources[0] }
     return $null
@@ -560,8 +635,21 @@ function _Invoke-SCIM {
     }
 
     $raw = Invoke-WebRequest @params
-    if ($raw.Content) { return ($raw.Content | ConvertFrom-Json) }
-    return $null
+
+    # In PowerShell 5.1 (ARS host), Invoke-WebRequest returns $raw.Content as
+    # byte[] for any Content-Type that is not "text/*". SCIM 2.0 mandates
+    # "application/scim+json", which means Content arrives as bytes and piping
+    # it into ConvertFrom-Json silently fails (no exception, no warning - you
+    # just get $null back). That is the root cause of Find-misses on records
+    # that DO exist server-side. Decode bytes -> UTF-8 string explicitly so
+    # parsing is reliable across PS 5.1, PS 7, and every SCIM 2.0 vendor.
+    $body = $raw.Content
+    if ($body -is [byte[]]) {
+        if ($body.Length -eq 0) { return $null }
+        $body = [System.Text.Encoding]::UTF8.GetString($body)
+    }
+    if ([string]::IsNullOrWhiteSpace($body)) { return $null }
+    return ($body | ConvertFrom-Json)
 }
 
 
@@ -600,9 +688,14 @@ function _Report {
     if ($Note)            { $line += "  ($Note)" }
     if ($ElapsedMs -gt 0) { $line += "  [${ElapsedMs}ms]" }
 
-    # Buffer for the summary that Dispatch-AllSCIM publishes via every viable channel.
-    if (-not $script:DispatchResultLines) { $script:DispatchResultLines = New-Object System.Collections.ArrayList }
-    [void]$script:DispatchResultLines.Add($line)
+    # Successes and idempotent no-ops (AlreadyActive / SkippedNotPresent /
+    # AlreadyInactive) go to the script trace - visible when you click into
+    # the activity in Change History, but NOT thrown. ARS only renders thrown
+    # text in the main Change History row, so throwing here would mark every
+    # happy-path dispatch as "Activity encountered an error". Only genuine
+    # failures (network/auth/5xx) should land in $script:DispatchResultLines
+    # and produce a throw - that work happens in _ReportError + the catch
+    # block in _Dispatch-OneApp.
     Write-Output $line
 }
 

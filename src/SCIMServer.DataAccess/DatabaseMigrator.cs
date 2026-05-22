@@ -530,20 +530,34 @@ END;
                 Name = "Tenant-scoped uniqueness on Users.UserName + Groups.DisplayName",
                 Description = "Replace global UQ_Users_UserName / UQ_Groups_DisplayName with composite (TenantId, ...) uniqueness so the same userName/displayName can legitimately exist in two tenants.",
                 SqlScript = @"
--- Users: drop global, add tenant-scoped
-IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Users_UserName' AND object_id = OBJECT_ID('dbo.Users'))
+-- Users: drop the global uniqueness in whichever form it exists (table
+-- constraint via CONSTRAINT clause OR a free-standing UNIQUE INDEX created
+-- by a different deploy path), then create the composite index.
+IF EXISTS (SELECT 1 FROM sys.key_constraints
+           WHERE name = 'UQ_Users_UserName' AND parent_object_id = OBJECT_ID('dbo.Users'))
 BEGIN
     ALTER TABLE [dbo].[Users] DROP CONSTRAINT [UQ_Users_UserName];
+END
+ELSE IF EXISTS (SELECT 1 FROM sys.indexes
+                WHERE name = 'UQ_Users_UserName' AND object_id = OBJECT_ID('dbo.Users'))
+BEGIN
+    DROP INDEX [UQ_Users_UserName] ON [dbo].[Users];
 END;
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Users_TenantId_UserName' AND object_id = OBJECT_ID('dbo.Users'))
 BEGIN
     CREATE UNIQUE NONCLUSTERED INDEX [UQ_Users_TenantId_UserName] ON [dbo].[Users]([TenantId], [UserName]);
 END;
 
--- Groups: same treatment
-IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Groups_DisplayName' AND object_id = OBJECT_ID('dbo.Groups'))
+-- Groups: same treatment (constraint or index form).
+IF EXISTS (SELECT 1 FROM sys.key_constraints
+           WHERE name = 'UQ_Groups_DisplayName' AND parent_object_id = OBJECT_ID('dbo.Groups'))
 BEGIN
     ALTER TABLE [dbo].[Groups] DROP CONSTRAINT [UQ_Groups_DisplayName];
+END
+ELSE IF EXISTS (SELECT 1 FROM sys.indexes
+                WHERE name = 'UQ_Groups_DisplayName' AND object_id = OBJECT_ID('dbo.Groups'))
+BEGIN
+    DROP INDEX [UQ_Groups_DisplayName] ON [dbo].[Groups];
 END;
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Groups_TenantId_DisplayName' AND object_id = OBJECT_ID('dbo.Groups'))
 BEGIN

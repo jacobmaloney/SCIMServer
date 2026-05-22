@@ -156,13 +156,6 @@ namespace SCIMServer.Web.Controllers
                     details: $"userName={user.UserName}");
                 return ScimConflict($"User with userName '{user.UserName}' already exists");
             }
-            catch (System.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
-            {
-                await _appLog.LogAsync(ApplicationLogService.LogLevel.Warning, "SCIM/Users/POST",
-                    $"CreateUser rejected (unique constraint): {sqlEx.Message}",
-                    details: $"userName={user.UserName}");
-                return ScimConflict($"User with userName '{user.UserName}' already exists");
-            }
             catch (Exception ex)
             {
                 await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/POST",
@@ -212,6 +205,13 @@ namespace SCIMServer.Web.Controllers
                 updatedUser.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Users/{updatedUser.Id}";
                 return Ok(updatedUser);
             }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Warning, "SCIM/Users/PUT",
+                    $"UpdateUser rejected (unique constraint): {sqlEx.Message}",
+                    details: $"id={id} userName={user.UserName}");
+                return ScimConflict($"User with userName '{user.UserName}' already exists");
+            }
             catch (Exception ex)
             {
                 await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/PUT",
@@ -260,6 +260,13 @@ namespace SCIMServer.Web.Controllers
 
                 updatedUser.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Users/{updatedUser.Id}";
                 return Ok(updatedUser);
+            }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Warning, "SCIM/Users/PATCH",
+                    $"PatchUser rejected (unique constraint): {sqlEx.Message}",
+                    details: $"id={id} userName={user.UserName}");
+                return ScimConflict($"User with userName '{user.UserName}' already exists");
             }
             catch (Exception ex)
             {

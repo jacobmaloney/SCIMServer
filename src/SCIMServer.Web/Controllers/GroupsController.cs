@@ -126,6 +126,10 @@ namespace SCIMServer.Web.Controllers
                 SetLocationHeader("Groups", createdGroup.Id);
                 return Created(createdGroup.Meta.Location, createdGroup);
             }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                return ScimConflict($"Group with displayName '{group.DisplayName}' already exists");
+            }
             catch (Exception ex)
             {
                 return ScimError(500, null, $"Error creating group: {ex.Message}");
@@ -165,6 +169,10 @@ namespace SCIMServer.Web.Controllers
                 updatedGroup.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Groups/{updatedGroup.Id}";
                 return Ok(updatedGroup);
             }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                return ScimConflict($"Group with displayName '{group.DisplayName}' already exists");
+            }
             catch (Exception ex)
             {
                 return ScimError(500, null, $"Error updating group: {ex.Message}");
@@ -203,6 +211,10 @@ namespace SCIMServer.Web.Controllers
                 var updatedGroup = await _groupRepository.UpdateAsync(groupId, group);
                 updatedGroup.Meta.Location = $"{GetBaseUrl()}{ScimPrefix()}/Groups/{updatedGroup.Id}";
                 return Ok(updatedGroup);
+            }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2601 || sqlEx.Number == 2627)
+            {
+                return ScimConflict($"Group with displayName '{group.DisplayName}' already exists");
             }
             catch (Exception ex)
             {
