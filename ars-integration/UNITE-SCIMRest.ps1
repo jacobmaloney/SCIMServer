@@ -46,18 +46,50 @@ function Dispatch-AllSCIM {
     if (-not $script:SCIMMappings) {
         throw "SCIMMappings not loaded - the mapping table from UNITE-SCIMMappings must be concatenated into this ScriptModule."
     }
+
+    $anyFailure = $false
+
     foreach ($app in $script:SCIMMappings.Keys) {
         # $Request.Get returns the new value only when the attribute was modified
         # in this submit. Empty/null otherwise - so untouched apps are skipped.
         $newValue = "$($Request.Get("SCIM-$app"))"
         if ([string]::IsNullOrEmpty($newValue)) { continue }
 
-        if ($newValue -ieq "true")  { _Do-Provision -AppKey $app -Request $Request }
-        elseif ($newValue -ieq "false") { _Do-Remove -AppKey $app -Request $Request }
-        # any other value (shouldn't happen for a Boolean virtual attr) - log and skip
-        else {
+        $isProvision = ($newValue -ieq "true")
+        $isRemove    = ($newValue -ieq "false")
+        if (-not ($isProvision -or $isRemove)) {
             Write-Output "[$app] Unexpected SCIM-$app value '$newValue' - skipping (expected 'true' or 'false')"
+            continue
         }
+
+        # Wrap each per-app dispatch in try/catch so one app's failure
+        # does not block the others. On failure, revert the checkbox to its
+        # previous value so the user can retry by re-toggling. Natural
+        # idempotency in _Do-Provision / _Do-Remove handles the workflow
+        # re-trigger that the revert causes (no infinite loop).
+        try {
+            if ($isProvision) { _Do-Provision -AppKey $app -Request $Request }
+            else              { _Do-Remove    -AppKey $app -Request $Request }
+        } catch {
+            $anyFailure = $true
+            $errMsg = "$($_.Exception.Message)"
+            $revertTo = -not $isProvision   # if Provision failed, was false before
+            try {
+                Set-QADObject $Request.DN -ObjectAttributes @{ "SCIM-$app" = $revertTo } | Out-Null
+                Write-Output "[$app] FAILED: $errMsg"
+                Write-Output "[$app] Auto-reverted SCIM-$app to $revertTo so the request shows the actual target state. Re-toggle the checkbox to retry."
+            } catch {
+                Write-Output "[$app] FAILED: $errMsg"
+                Write-Output "[$app] WARNING: could not auto-revert SCIM-$app to $revertTo ($($_.Exception.Message)). Uncheck and re-check manually to retry."
+            }
+        }
+    }
+
+    # If at least one app failed and was reverted, surface a single workflow-level
+    # warning at the end. ARS shows this in the activity's return value alongside
+    # the per-app lines above, so the operator sees both detail and summary.
+    if ($anyFailure) {
+        Write-Output "One or more SCIM targets failed; their checkboxes were auto-reverted. See lines above for details."
     }
 }
 

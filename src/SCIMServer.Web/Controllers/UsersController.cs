@@ -263,13 +263,22 @@ namespace SCIMServer.Web.Controllers
                 return ScimBadRequest("Invalid user ID format");
             }
 
-            var deleted = await _userRepository.DeleteAsync(userId);
-            if (!deleted)
+            try
             {
-                return ScimNotFound("User", id);
+                var deleted = await _userRepository.DeleteAsync(userId);
+                if (!deleted)
+                {
+                    return ScimNotFound("User", id);
+                }
+                return NoContent();
             }
-
-            return NoContent();
+            catch (Exception ex)
+            {
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/DELETE",
+                    $"DeleteUser threw {ex.GetType().Name}: {ex.Message}",
+                    details: $"id={id}", exception: ex);
+                return ScimError(500, null, $"Error deleting user: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         /// <summary>
