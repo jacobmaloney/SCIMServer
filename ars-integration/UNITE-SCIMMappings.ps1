@@ -122,11 +122,38 @@ $script:SCIMMappings = @{
     # }
 }
 
-# Convenience accessor for the engine.
+# ============================================================================
+# Per-app behavior config. Separate from the mapping table because this is
+# about LIFECYCLE policy, not field shape.
+#
+# Recognized keys:
+#   OnRemove = "Disable" (default) | "Delete"
+#     What to do when the SCIM-<App> virtual attribute flips to false.
+#     "Disable" -> PATCH active=false (row stays, marked inactive)
+#     "Delete"  -> HTTP DELETE on the SCIM user (row removed)
+#
+# Defaults: any app not listed here gets OnRemove="Disable".
+# ============================================================================
+
+$script:SCIMAppConfig = @{
+    "HRConnect"        = @{ OnRemove = "Disable" }
+    "ITHelpdeskPortal" = @{ OnRemove = "Disable" }
+    "FinanceSuite"     = @{ OnRemove = "Delete"  }   # per-seat pricing - actually remove on offboard
+}
+
+# Convenience accessors for the engine.
 function Get-SCIMMapping {
     param([Parameter(Mandatory=$true)][string]$AppKey)
     if (-not $script:SCIMMappings.ContainsKey($AppKey)) {
         throw "No SCIM mapping defined for AppKey '$AppKey'. Add an entry to `$script:SCIMMappings in UNITE-SCIMMappings."
     }
     return $script:SCIMMappings[$AppKey]
+}
+
+function Get-SCIMAppConfig {
+    param([Parameter(Mandatory=$true)][string]$AppKey)
+    if ($script:SCIMAppConfig -and $script:SCIMAppConfig.ContainsKey($AppKey)) {
+        return $script:SCIMAppConfig[$AppKey]
+    }
+    return @{}   # empty -> all defaults apply
 }

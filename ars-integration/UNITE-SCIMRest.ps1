@@ -30,21 +30,46 @@ try {
 
 
 # ============================================================================
-# PUBLIC ENTRY POINTS - wire these into the workflow IfElse branches
+# PUBLIC ENTRY POINTS
+# ----------------------------------------------------------------------------
+# Workflow XAML should call Dispatch-AllSCIM from a SINGLE PowerShellActivity.
+# This function loops over every app in the mapping table, checks whether the
+# matching SCIM-<App> virtual attribute changed in THIS submit, and routes
+# the change to Provision or Remove. Multiple checkboxes toggled in one
+# submit all get handled in one workflow run.
+#
+# Removal policy (Disable vs Delete) is per-app, read from $script:SCIMAppConfig
+# in UNITE-SCIMMappings. Defaults to Disable.
 # ============================================================================
 
+function Dispatch-AllSCIM {
+    if (-not $script:SCIMMappings) {
+        throw "SCIMMappings not loaded - the mapping table from UNITE-SCIMMappings must be concatenated into this ScriptModule."
+    }
+    foreach ($app in $script:SCIMMappings.Keys) {
+        # $Request.Get returns the new value only when the attribute was modified
+        # in this submit. Empty/null otherwise - so untouched apps are skipped.
+        $newValue = "$($Request.Get("SCIM-$app"))"
+        if ([string]::IsNullOrEmpty($newValue)) { continue }
+
+        if ($newValue -ieq "true")  { _Do-Provision -AppKey $app -Request $Request }
+        elseif ($newValue -ieq "false") { _Do-Remove -AppKey $app -Request $Request }
+        # any other value (shouldn't happen for a Boolean virtual attr) - log and skip
+        else {
+            Write-Output "[$app] Unexpected SCIM-$app value '$newValue' - skipping (expected 'true' or 'false')"
+        }
+    }
+}
+
+# Legacy per-app entry points kept for back-compat with workflow XAML that
+# still wires individual Provision-/Disable- branches. New deployments should
+# use the single Dispatch-AllSCIM activity above.
 function Provision-HRConnect        { _Do-Provision -AppKey "HRConnect"        -Request $Request }
-function Disable-HRConnect          { _Do-Disable   -AppKey "HRConnect"        -Request $Request }
-
+function Disable-HRConnect          { _Do-Remove    -AppKey "HRConnect"        -Request $Request }
 function Provision-ITHelpdeskPortal { _Do-Provision -AppKey "ITHelpdeskPortal" -Request $Request }
-function Disable-ITHelpdeskPortal   { _Do-Disable   -AppKey "ITHelpdeskPortal" -Request $Request }
-
+function Disable-ITHelpdeskPortal   { _Do-Remove    -AppKey "ITHelpdeskPortal" -Request $Request }
 function Provision-FinanceSuite     { _Do-Provision -AppKey "FinanceSuite"     -Request $Request }
-function Disable-FinanceSuite       { _Do-Disable   -AppKey "FinanceSuite"     -Request $Request }
-
-# Pattern for new apps:
-# function Provision-JiraCloud      { _Do-Provision -AppKey "JiraCloud"        -Request $Request }
-# function Disable-JiraCloud        { _Do-Disable   -AppKey "JiraCloud"        -Request $Request }
+function Disable-FinanceSuite       { _Do-Remove    -AppKey "FinanceSuite"     -Request $Request }
 
 
 # ============================================================================
@@ -65,6 +90,11 @@ function _Do-Provision {
         $sam = "$($user.sAMAccountName)"
         $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
         if ($existing) {
+            if ($existing.active -eq $true) {
+                $sw.Stop()
+                _Report -AppKey $AppKey -Action "Provision" -Verb "Already active" -UserName $sam -ScimId $existing.id -Note "no-op" -ElapsedMs $sw.ElapsedMilliseconds
+                return
+            }
             $body = _Build-PatchActive -Active $true
             $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
             $sw.Stop()
@@ -78,6 +108,18 @@ function _Do-Provision {
     } catch {
         $sw.Stop()
         _ReportError -AppKey $AppKey -Action "Provision" -Message (_Classify-NoResponse $_)
+    }
+}
+
+# Dispatch helper: read the per-app OnRemove policy and route to Disable or Delete.
+function _Do-Remove {
+    param([string]$AppKey, $Request)
+    $cfg = Get-SCIMAppConfig -AppKey $AppKey
+    $policy = if ($cfg -and $cfg.OnRemove) { $cfg.OnRemove } else { "Disable" }
+    if ($policy -ieq "Delete") {
+        _Do-Delete  -AppKey $AppKey -Request $Request
+    } else {
+        _Do-Disable -AppKey $AppKey -Request $Request
     }
 }
 
@@ -99,6 +141,11 @@ function _Do-Disable {
             _Report -AppKey $AppKey -Action "Disable" -Verb "Skipped" -UserName $sam -Note "user not present in target - no-op" -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
+        if ($existing.active -eq $false) {
+            $sw.Stop()
+            _Report -AppKey $AppKey -Action "Disable" -Verb "Already inactive" -UserName $sam -ScimId $existing.id -Note "no-op" -ElapsedMs $sw.ElapsedMilliseconds
+            return
+        }
 
         $body = _Build-PatchActive -Active $false
         $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
@@ -107,6 +154,34 @@ function _Do-Disable {
     } catch {
         $sw.Stop()
         _ReportError -AppKey $AppKey -Action "Disable" -Message (_Classify-NoResponse $_)
+    }
+}
+
+function _Do-Delete {
+    param([string]$AppKey, $Request)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $ctx  = _Get-SCIMContext -AppKey $AppKey
+        $user = _Get-UserAttributes -Request $Request
+        if (-not $user.sAMAccountName) {
+            _ReportError -AppKey $AppKey -Action "Delete" -Message "Could not read sAMAccountName from $($Request.DN)"
+            return
+        }
+
+        $sam = "$($user.sAMAccountName)"
+        $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
+        if (-not $existing) {
+            $sw.Stop()
+            _Report -AppKey $AppKey -Action "Delete" -Verb "Skipped" -UserName $sam -Note "user not present in target - no-op" -ElapsedMs $sw.ElapsedMilliseconds
+            return
+        }
+
+        $resp = _Invoke-SCIM -Method "DELETE" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $null
+        $sw.Stop()
+        _Report -AppKey $AppKey -Action "Delete" -Verb "Deleted" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+    } catch {
+        $sw.Stop()
+        _ReportError -AppKey $AppKey -Action "Delete" -Message (_Classify-NoResponse $_)
     }
 }
 
