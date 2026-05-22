@@ -354,17 +354,33 @@ function _Classify-NoResponse {
     $resp = $Err.Exception.Response
     # Token shape diagnostic captured by _Get-SCIMContext. Append on auth-shaped errors.
     $shape = if ($script:TokenShape) { "  [tokenShape: $($script:TokenShape)]" } else { "" }
+    # Pull the response body whenever there is one — SCIM error responses are JSON
+    # with a 'detail' field that names the actual exception. Without this we are
+    # blind on 4xx/5xx.
+    $body = ""
+    if ($resp) {
+        try {
+            $stream = $resp.GetResponseStream()
+            if ($stream) {
+                $sr = New-Object System.IO.StreamReader($stream)
+                $body = $sr.ReadToEnd()
+                $sr.Close()
+                if ($body.Length -gt 500) { $body = $body.Substring(0, 500) + "...(truncated)" }
+            }
+        } catch { }
+    }
+    $bodySuffix = if ($body) { "  [responseBody: $body]" } else { "" }
     if ($resp) {
         $code = [int]$resp.StatusCode
         switch ($code) {
-            401 { return "401 Unauthorized - server requires 'Bearer scim_<value>'. Paste the FULL mint string from SCIMServer admin UI into the MMC token parameter.$shape" }
-            403 { return "403 Forbidden - token is valid but scoped to a different Connected System." }
-            404 { return "404 Not Found - check the URI; the slug may not match a Connected System" }
-            409 { return "409 Conflict - user already exists; race condition between Find and Create" }
-            429 { return "429 Rate limited - back off and retry" }
+            401 { return "401 Unauthorized - server requires 'Bearer scim_<value>'. Paste the FULL mint string from SCIMServer admin UI into the MMC token parameter.$shape$bodySuffix" }
+            403 { return "403 Forbidden - token is valid but scoped to a different Connected System.$bodySuffix" }
+            404 { return "404 Not Found - check the URI; the slug may not match a Connected System.$bodySuffix" }
+            409 { return "409 Conflict - user already exists; race condition between Find and Create.$bodySuffix" }
+            429 { return "429 Rate limited - back off and retry.$bodySuffix" }
             default {
-                if ($code -ge 500) { return "$code Server error - check SCIMServer logs" }
-                return "$code $msg"
+                if ($code -ge 500) { return "$code Server error.$bodySuffix" }
+                return "$code $msg.$bodySuffix"
             }
         }
     }

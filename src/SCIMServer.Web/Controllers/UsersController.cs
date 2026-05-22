@@ -9,6 +9,7 @@ using Newtonsoft.Json.Linq;
 using SCIMServer.Core.Models;
 using SCIMServer.DataAccess.Repositories;
 using SCIMServer.Web.Authentication;
+using SCIMServer.Web.Services;
 
 namespace SCIMServer.Web.Controllers
 {
@@ -22,16 +23,18 @@ namespace SCIMServer.Web.Controllers
     {
         private readonly UserRepository _userRepository;
         private readonly TokenService _tokenService;
+        private readonly ApplicationLogService _appLog;
 
         private const string EnterpriseExtensionPrefix = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:";
 
         /// <summary>
         /// Initializes a new instance of the UsersController class
         /// </summary>
-        public UsersController(UserRepository userRepository, TokenService tokenService)
+        public UsersController(UserRepository userRepository, TokenService tokenService, ApplicationLogService appLog)
         {
             _userRepository = userRepository;
             _tokenService = tokenService;
+            _appLog = appLog;
         }
 
         /// <summary>
@@ -144,7 +147,11 @@ namespace SCIMServer.Web.Controllers
             }
             catch (Exception ex)
             {
-                return ScimError(500, null, $"Error creating user: {ex.Message}");
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/POST",
+                    $"CreateUser threw {ex.GetType().Name}: {ex.Message}",
+                    details: $"userName={user.UserName}  payload={Newtonsoft.Json.JsonConvert.SerializeObject(user)}",
+                    exception: ex);
+                return ScimError(500, null, $"Error creating user: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -189,7 +196,10 @@ namespace SCIMServer.Web.Controllers
             }
             catch (Exception ex)
             {
-                return ScimError(500, null, $"Error updating user: {ex.Message}");
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/PUT",
+                    $"UpdateUser threw {ex.GetType().Name}: {ex.Message}",
+                    details: $"id={id} userName={user.UserName}", exception: ex);
+                return ScimError(500, null, $"Error updating user: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -235,7 +245,10 @@ namespace SCIMServer.Web.Controllers
             }
             catch (Exception ex)
             {
-                return ScimError(500, null, $"Error patching user: {ex.Message}");
+                await _appLog.LogAsync(ApplicationLogService.LogLevel.Error, "SCIM/Users/PATCH",
+                    $"PatchUser threw {ex.GetType().Name}: {ex.Message}",
+                    details: $"id={id}", exception: ex);
+                return ScimError(500, null, $"Error patching user: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
