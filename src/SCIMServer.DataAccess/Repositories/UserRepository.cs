@@ -361,8 +361,8 @@ namespace SCIMServer.DataAccess.Repositories
                     Organization = user.EnterpriseExtension?.Organization,
                     Division = user.EnterpriseExtension?.Division,
                     Department = user.EnterpriseExtension?.Department,
-                    ManagerId = user.EnterpriseExtension?.Manager?.Value != null ?
-                        Guid.Parse(user.EnterpriseExtension.Manager.Value) : (Guid?)null
+                    ManagerId = (user.EnterpriseExtension?.Manager?.Value is { } mv && Guid.TryParse(mv, out var mgid))
+                        ? mgid : (Guid?)null
                 }, transaction);
 
                 // Insert related data
@@ -445,8 +445,9 @@ namespace SCIMServer.DataAccess.Repositories
             updateParams.Add("Organization", user.EnterpriseExtension?.Organization);
             updateParams.Add("Division", user.EnterpriseExtension?.Division);
             updateParams.Add("Department", user.EnterpriseExtension?.Department);
-            updateParams.Add("ManagerId", user.EnterpriseExtension?.Manager?.Value != null
-                ? Guid.Parse(user.EnterpriseExtension.Manager.Value) : (Guid?)null);
+            updateParams.Add("ManagerId",
+                (user.EnterpriseExtension?.Manager?.Value is { } mv2 && Guid.TryParse(mv2, out var mgid2))
+                    ? mgid2 : (Guid?)null);
             AddTenantParam(updateParams);
 
             using var connection = CreateConnection();

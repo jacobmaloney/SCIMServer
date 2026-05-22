@@ -91,11 +91,17 @@ $script:SCIMMappings = @{
         "enterprise.department"   = "department"
         "enterprise.costCenter"   = "extensionAttribute3"
         "enterprise.organization" = "company"
-        # Computed: resolve manager DN -> manager email for the enterprise.manager ref
-        "enterprise.manager.value" = {
+        # NOTE: enterprise.manager.value in SCIM 2.0 is a REFERENCE to another
+        # SCIM user (by their SCIM id, a GUID) - not an email or DN. To wire
+        # this correctly, the mapping would need to call SCIMServer first to
+        # look up the manager's SCIM id (or accept missing manager linkage on
+        # first-time provisioning and reconcile later). For the talk demo we
+        # surface the manager's display name instead, which is informational
+        # and harmless on the server side.
+        "enterprise.manager.displayName" = {
             param($u)
             if ($u.manager) {
-                try { (Get-QADUser $u.manager -DontUseDefaultIncludedProperties -IncludedProperties mail).mail }
+                try { (Get-QADUser $u.manager -DontUseDefaultIncludedProperties -IncludedProperties displayName).displayName }
                 catch { $null }
             }
         }
