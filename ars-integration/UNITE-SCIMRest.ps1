@@ -85,12 +85,37 @@ function Dispatch-AllSCIM {
         }
     }
 
-    # If at least one app failed and was reverted, surface a single workflow-level
-    # warning at the end. ARS shows this in the activity's return value alongside
-    # the per-app lines above, so the operator sees both detail and summary.
+    # Publish results. ARS's PowerShellActivity does not by default surface
+    # per-line Write-Output into Change History below "Activity successfully
+    # performed". We compose a multi-line summary and try every channel ARS
+    # exposes so SOMETHING lands in the visible report.
+    $lines = if ($script:DispatchResultLines) { @($script:DispatchResultLines) } else { @() }
     if ($anyFailure) {
-        Write-Output "One or more SCIM targets failed; their checkboxes were auto-reverted. See lines above for details."
+        $lines += ""
+        $lines += "One or more SCIM targets failed; their checkboxes were auto-reverted. Re-toggle to retry."
     }
+    if ($lines.Count -eq 0) {
+        $lines = @("[INFO]  No SCIM-* attributes were modified in this submit - nothing to dispatch.")
+    }
+    $summary = $lines -join "`r`n"
+
+    # Channel 1: workflow runtime parameter - same mechanism used by built-in
+    # ARS workflows like UserExists ("User Exists Return Value: 0" in Change
+    # History). The post-AddRecordToReport activity references this parameter
+    # via a WorkflowParameterToken so its value renders inline.
+    foreach ($call in @(
+        { $Workflow.SetParameter("SCIM-DispatchResults", $summary) },
+        { $Workflow.RuntimeParameters["SCIM-DispatchResults"] = $summary },
+        { $Workflow.SetParam("SCIM-DispatchResults", $summary) }
+    )) {
+        try { & $call; break } catch { }
+    }
+
+    # Channel 2: pipeline output (activity ReturnValue).
+    Write-Output $summary
+
+    # Channel 3: explicit return so PowerShell host sees a final scalar.
+    return $summary
 }
 
 # Legacy per-app entry points kept for back-compat with workflow XAML that
@@ -124,13 +149,13 @@ function _Do-Provision {
         if ($existing) {
             if ($existing.active -eq $true) {
                 $sw.Stop()
-                _Report -AppKey $AppKey -Action "Provision" -Verb "Already active" -UserName $sam -ScimId $existing.id -Note "no-op" -ElapsedMs $sw.ElapsedMilliseconds
+                _Report -AppKey $AppKey -Action "Provision" -Verb "AlreadyActive" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
                 return
             }
             $body = _Build-PatchActive -Active $true
             $resp = _Invoke-SCIM -Method "PATCH" -Url ("{0}/{1}" -f $ctx.Uri, $existing.id) -Token $ctx.Token -Body $body
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Provision" -Verb "Re-enabled" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Provision" -Verb "Reactivated" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
         } else {
             $body = _Build-CreateUser -AppKey $AppKey -User $user
             $resp = _Invoke-SCIM -Method "POST" -Url $ctx.Uri -Token $ctx.Token -Body $body
@@ -170,12 +195,12 @@ function _Do-Disable {
         $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
         if (-not $existing) {
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Disable" -Verb "Skipped" -UserName $sam -Note "user not present in target - no-op" -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Disable" -Verb "SkippedNotPresent" -UserName $sam -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
         if ($existing.active -eq $false) {
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Disable" -Verb "Already inactive" -UserName $sam -ScimId $existing.id -Note "no-op" -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Disable" -Verb "AlreadyInactive" -UserName $sam -ScimId $existing.id -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
 
@@ -204,7 +229,7 @@ function _Do-Delete {
         $existing = _Find-SCIMUser -Ctx $ctx -UserName $sam
         if (-not $existing) {
             $sw.Stop()
-            _Report -AppKey $AppKey -Action "Delete" -Verb "Skipped" -UserName $sam -Note "user not present in target - no-op" -ElapsedMs $sw.ElapsedMilliseconds
+            _Report -AppKey $AppKey -Action "Delete" -Verb "SkippedNotPresent" -UserName $sam -ElapsedMs $sw.ElapsedMilliseconds
             return
         }
 
@@ -254,15 +279,29 @@ function _Build-CreateUser {
 function _Resolve-MappingValue {
     param($Source, $User)
 
+    $raw = $null
     if ($Source -is [scriptblock]) {
-        try { return (& $Source $User) } catch { return $null }
+        try { $raw = (& $Source $User) } catch { return $null }
     }
-    if ($Source -is [string]) {
+    elseif ($Source -is [string]) {
         if ($Source.StartsWith("=")) { return $Source.Substring(1) }
-        # AD attribute lookup. Hashtables and PSObjects both indexable as $User.<name>.
-        return $User.$Source
+        $raw = $User.$Source
     }
-    return $Source
+    else { $raw = $Source }
+
+    # Quest AD cmdlets return ETS-decorated objects (e.g. ResultPropertyValueCollection)
+    # rather than plain strings. ConvertTo-Json serializes those as nested objects
+    # ({"Length":5,"name":"Jacob"}) which the SCIM server rejects with a 500.
+    # Coerce to a clean string here so downstream JSON is always primitive-shaped.
+    if ($null -eq $raw) { return $null }
+    if ($raw -is [string]) { return $raw }
+    if ($raw -is [bool])   { return $raw }
+    if ($raw -is [System.Collections.IEnumerable] -and -not ($raw -is [string])) {
+        # Multi-valued AD attr - take the first element and string-coerce.
+        foreach ($v in $raw) { return "$v" }
+        return $null
+    }
+    return "$raw"
 }
 
 # Walks a path like "name.givenName", "emails[0].value", or "enterprise.department"
@@ -443,30 +482,36 @@ function _Report {
     param(
         [string]$AppKey,
         [string]$Action,
-        [string]$Verb,           # "Created", "Re-enabled", "Disabled", "Skipped"
+        [string]$Verb,           # Created, Reactivated, AlreadyActive, Disabled, AlreadyInactive, Deleted, SkippedNotPresent
         [string]$UserName,
         [string]$ScimId = $null,
         [string]$Note   = $null,
         [long]  $ElapsedMs = 0
     )
-    # Human-readable label per AppKey (camelCase keys -> spaced labels).
     $appLabel = switch ($AppKey) {
         "HRConnect"         { "HR Connect" }
         "ITHelpdeskPortal"  { "IT Helpdesk Portal" }
         "FinanceSuite"      { "Finance Suite" }
         default             { $AppKey }
     }
+    $line = switch ($Verb) {
+        "Created"           { "[OK]    Connected $UserName to $appLabel - new SCIM identity created" }
+        "Reactivated"       { "[OK]    Re-enabled $UserName in $appLabel - existing identity reactivated" }
+        "AlreadyActive"     { "[INFO]  $UserName is already provisioned and active in $appLabel - connection healthy, no change needed" }
+        "Disabled"          { "[OK]    Disconnected $UserName from $appLabel - identity disabled (record retained)" }
+        "AlreadyInactive"   { "[INFO]  $UserName is already disabled in $appLabel - no change needed" }
+        "Deleted"           { "[OK]    Removed $UserName from $appLabel - identity deleted per app policy" }
+        "SkippedNotPresent" { "[INFO]  $UserName has no identity in $appLabel - nothing to disconnect" }
+        default             { "[OK]    $Verb $UserName in $appLabel" }
+    }
+    if ($ScimId)          { $line += "  (scimId=$ScimId)" }
+    if ($Note)            { $line += "  ($Note)" }
+    if ($ElapsedMs -gt 0) { $line += "  [${ElapsedMs}ms]" }
 
-    # Build a one-line headline that ARS Change History will display in full.
-    $headline = "$Verb '$UserName' in $appLabel"
-    if ($ScimId) { $headline += " - SCIM id $ScimId" }
-    if ($Note)   { $headline += " - $Note" }
-    if ($ElapsedMs -gt 0) { $headline += " - ${ElapsedMs}ms" }
-
-    # Write-Output goes to the workflow pipeline and ARS captures it as the
-    # activity's return value, which renders in Change History below the
-    # "Activity successfully performed the script" line.
-    Write-Output $headline
+    # Buffer for the summary that Dispatch-AllSCIM publishes via every viable channel.
+    if (-not $script:DispatchResultLines) { $script:DispatchResultLines = New-Object System.Collections.ArrayList }
+    [void]$script:DispatchResultLines.Add($line)
+    Write-Output $line
 }
 
 function _ReportError {
