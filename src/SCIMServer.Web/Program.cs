@@ -168,6 +168,7 @@ builder.Services.AddScoped<DemoSeedService>();
 builder.Services.AddScoped<ActiveSystemState>();
 builder.Services.AddScoped<LoginService>();
 builder.Services.AddScoped<SCIMServer.Core.Services.UserGenerationService>();
+builder.Services.AddTransient<SCIMServer.Core.Services.ScimConnectionProbe>();
 builder.Services.AddSingleton<ApplicationLogService>();
 builder.Services.AddSingleton<GenerationService>();
 builder.Services.AddSingleton<DataChangeNotifier>();

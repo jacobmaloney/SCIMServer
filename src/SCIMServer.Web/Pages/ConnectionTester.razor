@@ -1,0 +1,288 @@
+@page "/connection-tester"
+@attribute [Authorize]
+@implements IDisposable
+@using SCIMServer.Core.Services
+@inject ScimConnectionProbe Probe
+
+<PageTitle>Connection Tester - SCIM Server</PageTitle>
+
+<div class="container-fluid">
+    <h1>Connection Tester</h1>
+    <p class="lead">Test a connection from this machine to any SCIM system, one layer at a time.</p>
+
+    <div class="card mb-3 border-primary">
+        <div class="card-header bg-primary text-white">
+            <strong>Target system</strong>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-8">
+                    <label class="form-label" for="ctBaseUrl">SCIM base URL</label>
+                    <input id="ctBaseUrl" type="url" name="scim-base-url" autocomplete="off" spellcheck="false" class="form-control font-monospace" @bind="baseUrl"
+                           placeholder="https://host.example.com/scim/v2" disabled="@running" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="ctAuth">Sign-in method</label>
+                    <select id="ctAuth" class="form-select" @bind="auth" disabled="@running">
+                        <option value="@ScimProbeAuth.Bearer">Bearer token (API key)</option>
+                        <option value="@ScimProbeAuth.Basic">User name and password (Basic)</option>
+                        <option value="@ScimProbeAuth.OAuthClientCredentials">OAuth client id and secret</option>
+                        <option value="@ScimProbeAuth.None">None</option>
+                    </select>
+                </div>
+            </div>
+
+            @if (auth == ScimProbeAuth.Bearer)
+            {
+                <div class="row g-3 mt-1">
+                    <div class="col-12">
+                        <label class="form-label" for="ctToken">Token (without the word "Bearer")</label>
+                        <input id="ctToken" type="text" autocomplete="off" spellcheck="false" style="-webkit-text-security:disc" class="form-control font-monospace"
+                               @bind="token" disabled="@running" />
+                    </div>
+                </div>
+            }
+            else if (auth == ScimProbeAuth.Basic)
+            {
+                <div class="row g-3 mt-1">
+                    <div class="col-md-6">
+                        <label class="form-label" for="ctUser">User name</label>
+                        <input id="ctUser" type="text" autocomplete="off" class="form-control" @bind="username" disabled="@running" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="ctPassword">Password</label>
+                        <input id="ctPassword" type="text" autocomplete="off" spellcheck="false" style="-webkit-text-security:disc" class="form-control" @bind="password" disabled="@running" />
+                    </div>
+                </div>
+            }
+            else if (auth == ScimProbeAuth.OAuthClientCredentials)
+            {
+                <div class="row g-3 mt-1">
+                    <div class="col-12">
+                        <label class="form-label" for="ctTokenUrl">Token URL</label>
+                        <input id="ctTokenUrl" type="text" class="form-control font-monospace" @bind="tokenUrl"
+                               placeholder="https://login.example.com/oauth2/token" disabled="@running" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="ctClientId">Client id</label>
+                        <input id="ctClientId" type="text" autocomplete="off" class="form-control font-monospace" @bind="clientId" disabled="@running" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="ctClientSecret">Client secret</label>
+                        <input id="ctClientSecret" type="text" autocomplete="off" spellcheck="false" style="-webkit-text-security:disc" class="form-control font-monospace" @bind="clientSecret" disabled="@running" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="ctScope">Scope (optional)</label>
+                        <input id="ctScope" type="text" class="form-control font-monospace" @bind="scope" disabled="@running" />
+                    </div>
+                </div>
+            }
+
+            <div class="row g-3 mt-1 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label" for="ctTimeout">Give up on a step after (seconds)</label>
+                    <input id="ctTimeout" type="number" min="1" max="600" class="form-control" @bind="timeoutSeconds" disabled="@running" />
+                </div>
+                <div class="col-md-5">
+                    <div class="form-check">
+                        <input id="ctIgnoreCert" type="checkbox" class="form-check-input" @bind="ignoreCertificateErrors" disabled="@running" />
+                        <label class="form-check-label" for="ctIgnoreCert">Ignore certificate errors (report them, then carry on)</label>
+                    </div>
+                    <div class="form-check">
+                        <input id="ctProxy" type="checkbox" class="form-check-input" @bind="useSystemProxy" disabled="@running" />
+                        <label class="form-check-label" for="ctProxy">Use this machine's proxy settings</label>
+                    </div>
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button class="btn btn-primary flex-grow-1" @onclick="RunAsync"
+                            disabled="@(running || string.IsNullOrWhiteSpace(baseUrl))">
+                        @(running ? "Testing..." : "Run test")
+                    </button>
+                    @if (running)
+                    {
+                        <button class="btn btn-danger" @onclick="Cancel">Stop</button>
+                    }
+                </div>
+            </div>
+            <p class="mt-3 mb-0">
+                The test runs from the machine hosting this portal. Nothing you enter here is saved or written to the log.
+            </p>
+        </div>
+    </div>
+
+    @if (steps.Count > 0 || running)
+    {
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Result</h5>
+                <span>@(running ? $"Running: {currentStep}" : $"Finished in {totalMs:N0} ms")</span>
+            </div>
+            <div class="card-body">
+                @if (!running && verdict != null)
+                {
+                    <div class="alert @verdictClass" role="status"><strong>@verdict</strong></div>
+                }
+
+                <table class="table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:11rem">Step</th>
+                            <th style="width:7rem">Result</th>
+                            <th style="width:7rem" class="text-end">Time</th>
+                            <th>What happened</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var step in steps)
+                        {
+                            <tr>
+                                <td><strong>@step.Name</strong></td>
+                                <td><span class="badge @BadgeClass(step.Outcome)">@step.Outcome</span></td>
+                                <td class="text-end font-monospace">@(step.Outcome == ScimProbeOutcome.Skipped ? "" : $"{step.ElapsedMs:N0} ms")</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(step.Target))
+                                    {
+                                        <div class="font-monospace" style="word-break:break-all">@step.Target</div>
+                                    }
+                                    @foreach (var line in step.Details)
+                                    {
+                                        <div style="white-space:pre-wrap">@line</div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(step.Body))
+                                    {
+                                        <details class="mt-1">
+                                            <summary>Show the server's answer</summary>
+                                            <pre class="bg-light text-dark p-2 mt-1 mb-0" style="max-height:320px;overflow:auto"><code>@step.Body</code></pre>
+                                        </details>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (running)
+                        {
+                            <tr>
+                                <td><strong>@currentStep</strong></td>
+                                <td><span class="badge bg-primary">Running</span></td>
+                                <td></td>
+                                <td>Waiting for an answer...</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string baseUrl = "";
+    private ScimProbeAuth auth = ScimProbeAuth.Bearer;
+    private string token = "";
+    private string username = "";
+    private string password = "";
+    private string tokenUrl = "";
+    private string clientId = "";
+    private string clientSecret = "";
+    private string scope = "";
+    private int timeoutSeconds = 20;
+    private bool ignoreCertificateErrors;
+    private bool useSystemProxy = true;
+
+    private bool running;
+    private string currentStep = "";
+    private long totalMs;
+    private string? verdict;
+    private string verdictClass = "alert-success";
+    private readonly List<ScimProbeStep> steps = new();
+    private CancellationTokenSource? cts;
+
+    private async Task RunAsync()
+    {
+        steps.Clear();
+        verdict = null;
+        running = true;
+        currentStep = "Starting";
+        cts?.Dispose();
+        cts = new CancellationTokenSource();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            await Probe.RunAsync(
+                new ScimProbeRequest
+                {
+                    BaseUrl = baseUrl,
+                    Auth = auth,
+                    Token = token,
+                    Username = username,
+                    Password = password,
+                    TokenUrl = tokenUrl,
+                    ClientId = clientId,
+                    ClientSecret = clientSecret,
+                    Scope = scope,
+                    TimeoutSeconds = timeoutSeconds,
+                    IgnoreCertificateErrors = ignoreCertificateErrors,
+                    UseSystemProxy = useSystemProxy
+                },
+                onStepStarted: async name =>
+                {
+                    currentStep = name;
+                    await InvokeAsync(StateHasChanged);
+                },
+                onStepFinished: async step =>
+                {
+                    steps.Add(step);
+                    await InvokeAsync(StateHasChanged);
+                },
+                ct: cts.Token);
+        }
+        catch (Exception ex)
+        {
+            var failure = new ScimProbeStep { Name = "Tester error", Outcome = ScimProbeOutcome.Failed };
+            failure.Details.Add($"{ex.GetType().Name}: {ex.Message}");
+            steps.Add(failure);
+        }
+        finally
+        {
+            totalMs = clock.ElapsedMilliseconds;
+            running = false;
+            SetVerdict();
+        }
+    }
+
+    private void SetVerdict()
+    {
+        var firstFailure = steps.FirstOrDefault(s => s.Outcome == ScimProbeOutcome.Failed);
+        if (firstFailure != null)
+        {
+            verdict = $"Failed at: {firstFailure.Name}. Every step before it worked.";
+            verdictClass = "alert-danger";
+        }
+        else if (steps.Any(s => s.Outcome == ScimProbeOutcome.Warning))
+        {
+            verdict = "Connected, with warnings. Read the steps marked Warning.";
+            verdictClass = "alert-warning";
+        }
+        else
+        {
+            verdict = "Every step passed. This machine can reach the system and read from it with this credential.";
+            verdictClass = "alert-success";
+        }
+    }
+
+    private void Cancel() => cts?.Cancel();
+
+    private static string BadgeClass(ScimProbeOutcome outcome) => outcome switch
+    {
+        ScimProbeOutcome.Passed => "bg-success",
+        ScimProbeOutcome.Warning => "bg-warning text-dark",
+        ScimProbeOutcome.Failed => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}
